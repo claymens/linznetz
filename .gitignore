@@ -1,0 +1,10 @@
+.env
+.env.local
+power_archive/
+power_data.db
+venv/
+__pycache__/
+*.pyc
+screenshots/
+page_dump.html
+.claude/
