@@ -1,5 +1,7 @@
 # LINZ NETZ Power Data Archiver
 
+![Vibe Coded](https://img.shields.io/badge/coded-by%20vibes-purple?style=for-the-badge)
+
 Scrapes quarter-hourly power consumption data from the LINZ NETZ portal, stores it in a SQLite database, and provides a browser-based viewer.
 
 ## Files
@@ -106,3 +108,7 @@ Table: `consumption`
 | `EN` | Non-measured, not trusted |
 | `F` | Community data absent — `grid_kwh` equals `energy_kwh`, `community_kwh` is 0 |
 | *(null)* | No community processing yet — `grid_kwh` equals `energy_kwh`, `community_kwh` is 0 |
+
+## License
+
+MIT — see [LICENSE](LICENSE).
