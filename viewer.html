@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<!-- Serve from project root: python -m http.server 8000  →  http://localhost:8000/viewer.html -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Power Data Viewer</title>
+<script src="https://cdn.jsdelivr.net/npm/sql.js@1.10.3/dist/sql-wasm.min.js"></script>
+<style>
+:root {
+  --accent: #2563eb; --accent-dark: #1d4ed8;
+  --bg: #f1f5f9; --surface: #fff;
+  --border: #e2e8f0; --text: #1e293b; --muted: #64748b;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+       background: var(--bg); color: var(--text); font-size: 13px; }
+
+/* ── Header ── */
+header { background: var(--accent); color: #fff; padding: 12px 20px;
+         display: flex; align-items: center; gap: 10px; }
+header h1 { font-size: 15px; font-weight: 600; }
+
+/* ── Stats bar ── */
+#statsBar { background: var(--surface); border-bottom: 1px solid var(--border);
+            padding: 10px 20px; display: flex; gap: 28px; flex-wrap: wrap; }
+.stat { display: flex; flex-direction: column; gap: 1px; }
+.stat-label { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
+.stat-value { font-size: 14px; font-weight: 600; }
+
+/* ── Toolbar ── */
+.toolbar { padding: 10px 20px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.btn { padding: 5px 11px; border: 1px solid var(--border); border-radius: 5px;
+       cursor: pointer; background: var(--surface); font-size: 12px; color: var(--text); }
+.btn:hover { background: #f8fafc; }
+.btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.btn-primary:hover { background: var(--accent-dark); }
+input[type="file"] { display: none; }
+#resultCount { margin-left: auto; color: var(--muted); font-size: 12px; }
+
+/* ── Table ── */
+.table-wrap { padding: 0 20px 12px; overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; background: var(--surface);
+        border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+
+thead tr.col-headers th {
+  padding: 9px 12px; background: #f1f5f9; border-bottom: 1px solid var(--border);
+  text-align: left; white-space: nowrap; cursor: pointer; user-select: none; font-weight: 600;
+}
+thead tr.col-headers th:hover { background: #e2e8f0; }
+th.sort-asc::after  { content: ' ↑'; color: var(--accent); }
+th.sort-desc::after { content: ' ↓'; color: var(--accent); }
+
+thead tr.col-filters th { background: #f8fafc; padding: 4px 6px; border-bottom: 2px solid var(--border); }
+thead tr.col-filters input,
+thead tr.col-filters select {
+  width: 100%; padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px;
+  font-size: 11px; background: #fff; color: var(--text);
+}
+thead tr.col-filters input:focus,
+thead tr.col-filters select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px #dbeafe; }
+.range-pair { display: flex; gap: 3px; }
+.range-pair input { width: 50%; }
+
+tbody td { padding: 6px 12px; border-bottom: 1px solid #f1f5f9; white-space: nowrap; }
+tbody tr:last-child td { border-bottom: none; }
+tbody tr:hover td { background: #f8fafc; }
+td.num { text-align: right; font-family: 'SF Mono', 'Consolas', monospace; }
+
+.badge { display: inline-block; padding: 1px 7px; border-radius: 3px; font-size: 11px; font-weight: 600; }
+.badge-M     { background: #dcfce7; color: #15803d; }
+.badge-EB    { background: #dbeafe; color: #1d4ed8; }
+.badge-NV    { background: #fef3c7; color: #b45309; }
+.badge-EN    { background: #fee2e2; color: #b91c1c; }
+.badge-F     { background: #f1f5f9; color: var(--muted); }
+.badge-empty { background: #f1f5f9; color: var(--muted); }
+
+/* ── Pagination ── */
+#pagination { display: flex; align-items: center; gap: 4px; padding: 10px 20px 20px; }
+#pagination button {
+  min-width: 28px; height: 28px; padding: 0 6px;
+  border: 1px solid var(--border); border-radius: 4px; cursor: pointer;
+  background: var(--surface); font-size: 12px; color: var(--text);
+}
+#pagination button:hover:not(:disabled) { background: #f1f5f9; }
+#pagination button:disabled { opacity: .35; cursor: default; }
+#pagination button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.page-info { color: var(--muted); font-size: 12px; margin-left: 10px; }
+
+/* ── Year bar ── */
+#yearBar { background: var(--surface); border-bottom: 1px solid var(--border); padding: 4px 20px 10px; }
+.year-table { width: auto; border-collapse: collapse; font-size: 12px; }
+.year-table thead th { font-size: 10px; text-transform: uppercase; letter-spacing: .5px;
+  color: var(--muted); padding: 6px 16px 4px 0; font-weight: 600; text-align: left; }
+.year-table tbody td { padding: 4px 16px 4px 0; border-top: 1px solid #f1f5f9; white-space: nowrap; }
+.year-name { font-weight: 700; font-size: 13px; min-width: 56px; }
+.year-cur td { background: #eff6ff; }
+.year-cur .year-name { color: var(--accent); }
+.trend-up   { color: #15803d; font-weight: 700; }
+.trend-down { color: #b91c1c; font-weight: 700; }
+.trend-flat { color: var(--muted); }
+.year-proj  { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+/* ── Loading / dropzone ── */
+#loading { display: flex; flex-direction: column; align-items: center;
+           justify-content: center; padding: 100px 20px; gap: 14px; color: var(--muted); }
+.spinner { width: 32px; height: 32px; border: 3px solid var(--border);
+           border-top-color: var(--accent); border-radius: 50%;
+           animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+#dropzone { max-width: 380px; margin: 60px auto; background: var(--surface);
+            border: 2px dashed var(--border); border-radius: 12px;
+            padding: 56px 40px; text-align: center; cursor: pointer; transition: .15s; }
+#dropzone:hover, #dropzone.drag { border-color: var(--accent); background: #eff6ff; }
+#dropzone .icon { font-size: 36px; margin-bottom: 14px; }
+#dropzone h2 { font-size: 15px; margin-bottom: 6px; }
+#dropzone p { color: var(--muted); font-size: 12px; line-height: 1.6; }
+</style>
+</head>
+<body>
+
+<header>
+  <span>⚡</span>
+  <h1>Power Data Viewer</h1>
+</header>
+
+<div id="loading">
+  <div class="spinner"></div>
+  <span>Loading database…</span>
+</div>
+
+<div id="dropzone" style="display:none"
+     ondragover="event.preventDefault(); this.classList.add('drag')"
+     ondragleave="this.classList.remove('drag')"
+     ondrop="handleDrop(event)">
+  <div class="icon">📂</div>
+  <h2>Open power_data.db</h2>
+  <p>Locate the database file once — it will auto-load on every refresh.</p>
+  <button class="btn btn-primary" style="margin-top:16px;font-size:13px;padding:8px 20px"
+          onclick="pickAndLoad()">Open power_data.db</button>
+  <p style="margin-top:16px;color:var(--muted);font-size:11px">or drag &amp; drop the file here</p>
+  <input type="file" id="filePick" accept=".db" onchange="handleFile(event)">
+</div>
+
+<div id="app" style="display:none">
+  <div id="statsBar"></div>
+  <div id="yearBar"></div>
+
+  <div class="toolbar">
+    <button class="btn" onclick="pickAndLoad()">📂 Reload DB</button>
+    <button class="btn" onclick="clearFilters()">✕ Clear filters</button>
+    <button class="btn btn-primary" onclick="exportCSV()">⬇ Export filtered CSV</button>
+    <span id="resultCount"></span>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr class="col-headers">
+          <th onclick="setSort('timestamp_from')">Timestamp from</th>
+          <th onclick="setSort('timestamp_to')">Timestamp to</th>
+          <th onclick="setSort('energy_kwh')">Energy (kWh)</th>
+          <th onclick="setSort('grid_kwh')">Grid (kWh)</th>
+          <th onclick="setSort('community_kwh')">Community (kWh)</th>
+          <th onclick="setSort('community_status')">Status</th>
+        </tr>
+        <tr class="col-filters">
+          <th><input type="text" placeholder="e.g. 2025-05" id="f_ts_from"
+                     oninput="setFilter('ts_from', this.value)"></th>
+          <th><input type="text" placeholder="e.g. 2025-05"
+                     oninput="setFilter('ts_to', this.value)"></th>
+          <th><div class="range-pair">
+            <input type="number" placeholder="min" step="any" id="f_energy_min"
+                   oninput="setFilter('energy_min', this.value)">
+            <input type="number" placeholder="max" step="any" id="f_energy_max"
+                   oninput="setFilter('energy_max', this.value)">
+          </div></th>
+          <th><div class="range-pair">
+            <input type="number" placeholder="min" step="any" id="f_grid_min"
+                   oninput="setFilter('grid_min', this.value)">
+            <input type="number" placeholder="max" step="any" id="f_grid_max"
+                   oninput="setFilter('grid_max', this.value)">
+          </div></th>
+          <th><div class="range-pair">
+            <input type="number" placeholder="min" step="any" id="f_comm_min"
+                   oninput="setFilter('comm_min', this.value)">
+            <input type="number" placeholder="max" step="any" id="f_comm_max"
+                   oninput="setFilter('comm_max', this.value)">
+          </div></th>
+          <th><select id="f_status" onchange="setFilter('status', this.value)">
+            <option value="">All</option>
+            <option value="M">M — Measured</option>
+            <option value="EB">EB — Non-measured trusted</option>
+            <option value="NV">NV — Value missing</option>
+            <option value="EN">EN — Non-measured not trusted</option>
+            <option value="F">F — Community data absent</option>
+            <option value="__null__">— No status</option>
+          </select></th>
+        </tr>
+      </thead>
+      <tbody id="tableBody"></tbody>
+    </table>
+  </div>
+
+  <div id="pagination"></div>
+</div>
+
+<script>
+const PAGE_SIZE = 100;
+let db = null;
+let sortCol = 'timestamp_from';
+let sortDir = 'ASC';
+let filters = { ts_from:'', ts_to:'', energy_min:'', energy_max:'', grid_min:'', grid_max:'', comm_min:'', comm_max:'', status:'' };
+let currentPage = 1;
+let totalRows = 0;
+
+const COLS = ['timestamp_from','timestamp_to','energy_kwh','grid_kwh','community_kwh','community_status'];
+
+// ── File handle persistence (File System Access API + IndexedDB) ─────────────
+
+function idbOp(mode, fn) {
+  return new Promise(res => {
+    const req = indexedDB.open('power-viewer', 1);
+    req.onupgradeneeded = e => e.target.result.createObjectStore('h');
+    req.onsuccess = e => {
+      try {
+        const tx = e.target.result.transaction('h', mode);
+        const r = fn(tx.objectStore('h'));
+        if (r) { r.onsuccess = ev => res(ev.target.result); r.onerror = () => res(null); }
+        else { tx.oncomplete = () => res(); }
+      } catch { res(null); }
+    };
+    req.onerror = () => res(null);
+  });
+}
+const idbGet = key => idbOp('readonly',  s => s.get(key));
+const idbSet = (key, val) => idbOp('readwrite', s => { s.put(val, key); return null; });
+
+async function pickAndLoad() {
+  if (window._pendingHandle) {
+    try {
+      const perm = await window._pendingHandle.requestPermission({ mode: 'read' });
+      if (perm === 'granted') {
+        loadDb(new Uint8Array(await (await window._pendingHandle.getFile()).arrayBuffer()));
+        return;
+      }
+    } catch {}
+    window._pendingHandle = null;
+  }
+  if ('showOpenFilePicker' in window) {
+    try {
+      const existing = await idbGet('dbHandle');
+      const [h] = await showOpenFilePicker({
+        types: [{ description: 'SQLite Database', accept: { 'application/x-sqlite3': ['.db'] } }],
+        id: 'power-db',
+        startIn: existing || 'documents',
+      });
+      await idbSet('dbHandle', h);
+      loadDb(new Uint8Array(await (await h.getFile()).arrayBuffer()));
+    } catch {}
+  } else {
+    document.getElementById('filePick').click();
+  }
+}
+
+// ── Bootstrap ────────────────────────────────────────────────────────────────
+
+function showDropzone() {
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('dropzone').style.display = 'block';
+}
+
+initSqlJs({ locateFile: f => `https://cdn.jsdelivr.net/npm/sql.js@1.10.3/dist/${f}` })
+  .then(async SQL => {
+    window.SQL = SQL;
+    // 1. HTTP fetch (works when served via http.server)
+    try {
+      const r = await fetch('power_data.db');
+      if (r.ok) { loadDb(new Uint8Array(await r.arrayBuffer())); return; }
+    } catch {}
+    // 2. Stored file handle — auto-loads if permission already granted this session
+    const h = await idbGet('dbHandle');
+    if (h) {
+      try {
+        const perm = await h.queryPermission({ mode: 'read' });
+        if (perm === 'granted') {
+          loadDb(new Uint8Array(await (await h.getFile()).arrayBuffer()));
+          return;
+        }
+        window._pendingHandle = h;
+      } catch {}
+    }
+    showDropzone();
+  })
+  .catch(showDropzone);
+
+function loadDb(data) {
+  if (db) db.close();
+  db = new window.SQL.Database(data);
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('dropzone').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+  renderStats();
+  renderYearStats();
+  renderTable();
+}
+
+function renderYearStats() {
+  const rows = query(`
+    SELECT strftime('%Y', timestamp_from) AS year,
+           ROUND(SUM(energy_kwh), 2)      AS total_kwh,
+           ROUND(SUM(community_kwh), 2)   AS comm_kwh
+    FROM consumption
+    GROUP BY year
+    ORDER BY year ASC
+  `);
+
+  const currentYear = new Date().getFullYear().toString();
+  const now         = new Date();
+  const projFactor  = (new Date(now.getFullYear() + 1, 0, 1) - new Date(now.getFullYear(), 0, 1))
+                    / Math.max(1, now - new Date(now.getFullYear(), 0, 1));
+
+  function trend(diff) {
+    if (diff == null) return '';
+    const s = diff > 0 ? '+' : '';
+    if      (diff >  0.05) return `<span class="trend-up">↑ ${s}${diff.toFixed(1)}%</span>`;
+    else if (diff < -0.05) return `<span class="trend-down">↓ ${s}${diff.toFixed(1)}%</span>`;
+    else                   return `<span class="trend-flat">→</span>`;
+  }
+
+  const bodyRows = rows.map((r, i) => {
+    const pct     = r.total_kwh > 0 ? (r.comm_kwh / r.total_kwh) * 100 : 0;
+    const prev    = i > 0 ? rows[i - 1] : null;
+    const prevPct = prev && prev.total_kwh > 0 ? (prev.comm_kwh / prev.total_kwh) * 100 : null;
+    const isCur   = r.year === currentYear;
+
+    let energyCell, commCell;
+    if (isCur) {
+      const projTotal    = Math.round(r.total_kwh * projFactor);
+      const projComm     = Math.round(r.comm_kwh  * projFactor);
+      const projPct      = projTotal > 0 ? (projComm / projTotal) * 100 : 0;
+      const projEnDiff   = prev ? (projTotal - prev.total_kwh) / prev.total_kwh * 100 : null;
+      const projCommDiff = prevPct != null ? projPct - prevPct : null;
+      energyCell = `${r.total_kwh?.toLocaleString()} kWh
+        <span class="year-proj">proj. ${projTotal.toLocaleString()} kWh ${trend(projEnDiff)}</span>`;
+      commCell   = `${r.comm_kwh?.toLocaleString()} kWh · ${pct.toFixed(1)}%
+        <span class="year-proj">proj. ${projComm.toLocaleString()} kWh · ${projPct.toFixed(1)}% ${trend(projCommDiff)}</span>`;
+    } else {
+      const totalDiff = prev ? (r.total_kwh - prev.total_kwh) / prev.total_kwh * 100 : null;
+      energyCell = `${r.total_kwh?.toLocaleString()} kWh ${trend(totalDiff)}`;
+      commCell   = `${r.comm_kwh?.toLocaleString()} kWh · ${pct.toFixed(1)}% ${trend(prevPct != null ? pct - prevPct : null)}`;
+    }
+
+    return `<tr ${isCur ? 'class="year-cur"' : ''}>
+      <td class="year-name">${r.year}</td>
+      <td>${energyCell}</td>
+      <td>${commCell}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('yearBar').innerHTML = `
+    <table class="year-table">
+      <thead><tr><th>Year</th><th>Total Energy</th><th>Community</th></tr></thead>
+      <tbody>${bodyRows}</tbody>
+    </table>`;
+}
+
+function handleFile(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const r = new FileReader();
+  r.onload = ev => loadDb(new Uint8Array(ev.target.result));
+  r.readAsArrayBuffer(file);
+}
+
+function handleDrop(e) {
+  e.preventDefault();
+  document.getElementById('dropzone').classList.remove('drag');
+  const file = e.dataTransfer.files[0];
+  if (!file) return;
+  const r = new FileReader();
+  r.onload = ev => loadDb(new Uint8Array(ev.target.result));
+  r.readAsArrayBuffer(file);
+}
+
+// ── Query helpers ────────────────────────────────────────────────────────────
+
+function esc(s) { return String(s).replace(/'/g, "''"); }
+
+function buildWhere() {
+  const parts = [];
+  if (filters.ts_from)    parts.push(`timestamp_from LIKE '${esc(filters.ts_from)}%'`);
+  if (filters.ts_to)      parts.push(`timestamp_to LIKE '${esc(filters.ts_to)}%'`);
+  if (filters.energy_min !== '') parts.push(`energy_kwh >= ${+filters.energy_min}`);
+  if (filters.energy_max !== '') parts.push(`energy_kwh <= ${+filters.energy_max}`);
+  if (filters.grid_min   !== '') parts.push(`grid_kwh >= ${+filters.grid_min}`);
+  if (filters.grid_max   !== '') parts.push(`grid_kwh <= ${+filters.grid_max}`);
+  if (filters.comm_min   !== '') parts.push(`community_kwh >= ${+filters.comm_min}`);
+  if (filters.comm_max   !== '') parts.push(`community_kwh <= ${+filters.comm_max}`);
+  if (filters.status) {
+    parts.push(filters.status === '__null__'
+      ? `community_status IS NULL`
+      : `community_status = '${esc(filters.status)}'`);
+  }
+  return parts.length ? 'WHERE ' + parts.join(' AND ') : '';
+}
+
+function query(sql) {
+  const res = db.exec(sql);
+  if (!res.length) return [];
+  const { columns, values } = res[0];
+  return values.map(row => Object.fromEntries(columns.map((c, i) => [c, row[i]])));
+}
+
+// ── Render ───────────────────────────────────────────────────────────────────
+
+function renderStats() {
+  const r = query(`
+    SELECT COUNT(*) as n,
+           MIN(timestamp_from) as first,
+           MAX(timestamp_from) as last,
+           ROUND(SUM(energy_kwh), 2) as total_kwh,
+           ROUND(SUM(community_kwh), 2) as community_kwh
+    FROM consumption
+  `)[0];
+  const pct = r.total_kwh > 0 ? ((r.community_kwh / r.total_kwh) * 100).toFixed(1) : 0;
+  document.getElementById('statsBar').innerHTML = `
+    <div class="stat">
+      <span class="stat-label">Total readings</span>
+      <span class="stat-value">${r.n.toLocaleString()}</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Date range</span>
+      <span class="stat-value">${r.first?.slice(0,10)} → ${r.last?.slice(0,10)}</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Total energy</span>
+      <span class="stat-value">${r.total_kwh?.toLocaleString()} kWh</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Community supplied</span>
+      <span class="stat-value">${r.community_kwh?.toLocaleString()} kWh (${pct}%)</span>
+    </div>
+  `;
+}
+
+function renderTable() {
+  const where = buildWhere();
+
+  const countRes = db.exec(`SELECT COUNT(*) FROM consumption ${where}`);
+  totalRows = countRes[0]?.values[0][0] ?? 0;
+  document.getElementById('resultCount').textContent =
+    `${totalRows.toLocaleString()} row${totalRows !== 1 ? 's' : ''}`;
+
+  const offset = (currentPage - 1) * PAGE_SIZE;
+  const rows = query(`
+    SELECT timestamp_from, timestamp_to, energy_kwh, grid_kwh, community_kwh, community_status
+    FROM consumption ${where}
+    ORDER BY ${sortCol} ${sortDir}
+    LIMIT ${PAGE_SIZE} OFFSET ${offset}
+  `);
+
+  // sort indicators
+  document.querySelectorAll('thead tr.col-headers th').forEach((th, i) => {
+    th.classList.remove('sort-asc', 'sort-desc');
+    if (COLS[i] === sortCol) th.classList.add(sortDir === 'ASC' ? 'sort-asc' : 'sort-desc');
+  });
+
+  document.getElementById('tableBody').innerHTML = rows.map(r => `
+    <tr>
+      <td>${r.timestamp_from ?? ''}</td>
+      <td>${r.timestamp_to ?? ''}</td>
+      <td class="num">${fmt(r.energy_kwh)}</td>
+      <td class="num">${fmt(r.grid_kwh)}</td>
+      <td class="num">${fmt(r.community_kwh)}</td>
+      <td>${badge(r.community_status)}</td>
+    </tr>
+  `).join('');
+
+  renderPagination();
+}
+
+function fmt(v) {
+  return (v === null || v === undefined) ? '—' : Number(v).toFixed(4);
+}
+
+function badge(s) {
+  if (!s) return '<span class="badge badge-empty">—</span>';
+  const cls = { M: 'badge-M', EB: 'badge-EB', NV: 'badge-NV', EN: 'badge-EN', F: 'badge-F' }[s] ?? 'badge-empty';
+  return `<span class="badge ${cls}">${s}</span>`;
+}
+
+function renderPagination() {
+  const totalPages = Math.max(1, Math.ceil(totalRows / PAGE_SIZE));
+  let html = `
+    <button onclick="goPage(1)" ${currentPage===1?'disabled':''}>«</button>
+    <button onclick="goPage(${currentPage-1})" ${currentPage===1?'disabled':''}>‹</button>
+  `;
+  const lo = Math.max(1, currentPage - 2);
+  const hi = Math.min(totalPages, currentPage + 2);
+  if (lo > 1) html += `<button onclick="goPage(1)">1</button>${lo>2?'<span style="padding:0 4px;color:var(--muted)">…</span>':''}`;
+  for (let p = lo; p <= hi; p++)
+    html += `<button onclick="goPage(${p})" ${p===currentPage?'class="active"':''}>${p}</button>`;
+  if (hi < totalPages) html += `${hi<totalPages-1?'<span style="padding:0 4px;color:var(--muted)">…</span>':''}<button onclick="goPage(${totalPages})">${totalPages}</button>`;
+  html += `
+    <button onclick="goPage(${currentPage+1})" ${currentPage>=totalPages?'disabled':''}>›</button>
+    <button onclick="goPage(${totalPages})" ${currentPage>=totalPages?'disabled':''}>»</button>
+    <span class="page-info">Page ${currentPage.toLocaleString()} of ${totalPages.toLocaleString()} · ${totalRows.toLocaleString()} rows</span>
+  `;
+  document.getElementById('pagination').innerHTML = html;
+}
+
+// ── Controls ─────────────────────────────────────────────────────────────────
+
+function setSort(col) {
+  sortDir = (sortCol === col && sortDir === 'ASC') ? 'DESC' : 'ASC';
+  sortCol = col;
+  currentPage = 1;
+  renderTable();
+}
+
+function setFilter(key, value) {
+  filters[key] = value ?? '';
+  currentPage = 1;
+  renderTable();
+}
+
+function goPage(p) {
+  currentPage = Math.max(1, Math.min(Math.ceil(totalRows / PAGE_SIZE), p));
+  renderTable();
+}
+
+function clearFilters() {
+  filters = { ts_from:'', ts_to:'', energy_min:'', energy_max:'', grid_min:'', grid_max:'', comm_min:'', comm_max:'', status:'' };
+  document.querySelectorAll('thead tr.col-filters input').forEach(el => el.value = '');
+  document.querySelectorAll('thead tr.col-filters select').forEach(el => el.value = '');
+  currentPage = 1;
+  renderTable();
+}
+
+function exportCSV() {
+  const where = buildWhere();
+  const rows = query(`
+    SELECT timestamp_from, timestamp_to, energy_kwh, grid_kwh, community_kwh, community_status
+    FROM consumption ${where}
+    ORDER BY ${sortCol} ${sortDir}
+  `);
+  const header = 'timestamp_from;timestamp_to;energy_kwh;grid_kwh;community_kwh;community_status';
+  const lines = [header, ...rows.map(r =>
+    [r.timestamp_from, r.timestamp_to, r.energy_kwh, r.grid_kwh, r.community_kwh, r.community_status ?? ''].join(';')
+  )];
+  const a = Object.assign(document.createElement('a'), {
+    href: URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/csv' })),
+    download: 'power_data_export.csv'
+  });
+  a.click();
+}
+</script>
+</body>
+</html>
