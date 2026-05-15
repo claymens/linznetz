@@ -3,6 +3,7 @@ import os
 from datetime import datetime
 
 LASTRUN_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lastrun.log")
+OK = "✅ "
 
 
 class _Tee:
@@ -19,7 +20,7 @@ class _Tee:
 
 
 def run():
-    from get_data import run_archiver, OK
+    from get_data import run_archiver
     from db_update import main as update_db
 
     ha = "--ha" in sys.argv

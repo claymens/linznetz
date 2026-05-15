@@ -1,4 +1,4 @@
-playwright==1.59.0
-python-dotenv==1.2.1
-python-dateutil==2.8.2
+playwright>=1.59.0
+python-dotenv>=1.2.0
+python-dateutil>=2.8.2
 websockets>=12.0

@@ -1,7 +1,7 @@
 """
 Push power_data.db statistics into Home Assistant for the Energy Dashboard.
 Run once to backfill all history; safe to re-run after new data is imported —
-only entries newer than the last import are sent (with a 25-hour overlap to
+only entries newer than the last import are sent (with a 2-hour overlap to
 catch any incomplete hours from the previous run).
 
 Requires in .env:

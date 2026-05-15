@@ -22,15 +22,16 @@ USER = os.getenv("LINZNETZ_USER", "YOUR_USERNAME")
 PWD = os.getenv("LINZNETZ_PWD", "YOUR_PASSWORD")
 DOWNLOAD_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "power_archive")
 URL = "https://services.linznetz.at/verbrauchsdateninformation/consumption.jsf"
-TIMEOUT = 3000  # 3 seconds
+TIMEOUT      = 3_000   # general UI interactions
+TIMEOUT_AJAX = 10_000  # date-picker AJAX redraws
+TIMEOUT_CSV  = 15_000  # CSV button appearance after data load
 
 # Month range configuration (YYYY-MM format)
 START_MONTH = os.getenv("START_MONTH", "2024-01")
 END_MONTH = os.getenv("END_MONTH") or datetime.now().strftime("%Y-%m")
 DATE_FORMAT = "%d.%m.%Y"  # Format expected by the web form
 
-if not os.path.exists(DOWNLOAD_PATH):
-    os.makedirs(DOWNLOAD_PATH)
+Path(DOWNLOAD_PATH).mkdir(exist_ok=True)
 
 def generate_monthly_ranges(start_month_str, end_month_str):
     start = datetime.strptime(start_month_str, "%Y-%m")
@@ -54,7 +55,6 @@ def debug_page(page, step_name):
     print(f"  [{step_name}] Title: {page.title()}")
 
 def run_archiver():
-    print("\n=== LINZ NETZ Power Data Archiver ===\n")
 
     monthly_ranges = generate_monthly_ranges(START_MONTH, END_MONTH)
 
@@ -196,18 +196,18 @@ def run_archiver():
                     page.evaluate(f"""
                         $('[id="myForm1:calendarFromRegion"]').data("DateTimePicker").date(moment('{from_date}', 'DD.MM.YYYY'));
                     """)
-                    page.wait_for_load_state("networkidle", timeout=10000)
+                    page.wait_for_load_state("networkidle", timeout=TIMEOUT_AJAX)
 
                     # Step 2: Trigger "bis" DateTimePicker similarly and wait for its AJAX.
                     page.evaluate(f"""
                         $('[id="myForm1:calendarToRegion"]').data("DateTimePicker").date(moment('{to_date}', 'DD.MM.YYYY'));
                     """)
-                    page.wait_for_load_state("networkidle", timeout=10000)
+                    page.wait_for_load_state("networkidle", timeout=TIMEOUT_AJAX)
 
                     # Step 3: Force-set both input values and fire PrimeFaces.ab in a single
                     # synchronous JS block so no async AJAX can overwrite them between the two.
                     anzeigen_button = page.locator('input[id="myForm1:btnIdA1"]')
-                    if anzeigen_button.is_visible(timeout=2000):
+                    if anzeigen_button.is_visible(timeout=TIMEOUT):
                         page.evaluate(f"""
                             document.querySelector('[id="myForm1:calendarFromRegion"]').value = '{from_date}';
                             document.querySelector('[id="myForm1:calendarToRegion"]').value = '{to_date}';
@@ -223,7 +223,7 @@ def run_archiver():
                         print(f"    {OK}Set {from_date} → {to_date}, triggered 'Anzeigen'")
                         page.wait_for_load_state("networkidle", timeout=TIMEOUT)
                         try:
-                            page.get_by_text("CSV", exact=False).wait_for(state="visible", timeout=15000)
+                            page.get_by_text("CSV", exact=False).wait_for(state="visible", timeout=TIMEOUT_CSV)
                         except Exception:
                             pass
                     else:
@@ -232,7 +232,7 @@ def run_archiver():
                     # Export CSV — matched by text
                     export_button = page.get_by_text("CSV", exact=False).first
 
-                    if export_button.is_visible(timeout=3000):
+                    if export_button.is_visible(timeout=TIMEOUT):
                         print(f"    {OK}Found CSV export button")
                         with page.expect_download(timeout=TIMEOUT) as download_info:
                             export_button.click()
@@ -264,7 +264,8 @@ def run_archiver():
             traceback.print_exc()
         finally:
             browser.close()
-            print("[DONE] Browser closed.\n")
+            print(f"{OK}Browser closed.\n")
 
 if __name__ == "__main__":
+    print("\n=== LINZ NETZ Power Data Archiver ===\n")
     run_archiver()

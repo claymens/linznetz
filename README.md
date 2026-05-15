@@ -16,7 +16,7 @@ Scrapes quarter-hourly power consumption data from the LINZ NETZ portal, stores 
 
 | File | Purpose |
 |------|---------|
-| `main.py` | Runs `get_data.py` then `db_update.py`; optionally `ha_import.py` with `--ha` |
+| `main.py` | Runs `get_data.py` then `db_update.py`; optionally `ha_import.py` with `--ha`; writes `lastrun.log` |
 | `get_data.py` | Downloads CSVs from the LINZ NETZ portal via Playwright |
 | `db_update.py` | Imports CSVs from `power_archive/` into `power_data.db` |
 | `viewer.html` | Browser-based viewer for the SQLite database |
@@ -72,7 +72,7 @@ python get_data.py           # normal run
 python get_data.py --debug   # also print page URL and title at each navigation step
 ```
 - Skips months already in `power_archive/` — no login needed if everything is up to date
-- Always re-downloads the current month (readings accumulate throughout the month)
+- Always re-downloads the current month if not yet downloaded today (readings accumulate throughout the month)
 - Months with no portal data get a `_NO_DATA` marker and are silently skipped on future runs
 
 ### 2. Update the database
@@ -183,13 +183,13 @@ HA_URL=ws://homeassistant.local:8123/api/websocket
 HA_TOKEN=your_long_lived_access_token
 ```
 
-### Step 4 — Run the import
+### Step 4 — Run the initial import
 
 ```bash
 python ha_import.py
 ```
 
-Pushes the full hourly history (~26 000 entries per series) to HA. No restart required afterwards.
+Pushes the full hourly history (~26 000 entries per series) to HA. No restart required afterwards. After this one-time backfill, use `python main.py --ha` (or the cron job) for ongoing incremental updates.
 
 ### Step 5 — Configure the Energy Dashboard
 
