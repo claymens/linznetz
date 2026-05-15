@@ -98,7 +98,7 @@ async def import_series(ws, msg_id: int, statistic_id: str, name: str, col: str,
         result = json.loads(await ws.recv())
         ok = result.get("success", False)
         end = min(i + CHUNK, len(stats))
-        print(f"  {'✓' if ok else '✗'} entries {i + 1}–{end}" +
+        print(f"  {'✅' if ok else '❌'} entries {i + 1}–{end}" +
               (f"  error: {result.get('error')}" if not ok else ""))
         msg_id += 1
     return msg_id

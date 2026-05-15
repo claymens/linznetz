@@ -6,6 +6,12 @@
 
 Scrapes quarter-hourly power consumption data from the LINZ NETZ portal, stores it in a SQLite database, and provides a browser-based viewer. Optionally pushes the data to Home Assistant. Intended to run daily as a cron job.
 
+- ⚡ **Quarter-hourly data** scraped from the LINZ NETZ portal via Playwright
+- 🗄️ **SQLite archive** with full history and incremental updates
+- 🌐 **Browser-based viewer** — filter, sort, export CSV, no server needed
+- 🏠 **Home Assistant integration** — Energy Dashboard with full historical data
+- 📋 **Last run log** — `lastrun.log` always shows the output of the most recent run
+
 ## Files
 
 | File | Purpose |
@@ -55,7 +61,7 @@ python main.py --ha   # download + update database + push to Home Assistant
 
 To run daily at 02:21 via cron (`crontab -e`):
 ```
-21 2 * * * cd /path/to/linznet && venv/bin/python main.py --ha >> logs/main.log 2>&1
+21 2 * * * cd /path/to/linznet && venv/bin/python main.py --ha
 ```
 
 Or run the steps individually:
@@ -95,6 +101,7 @@ python -m http.server 8000
 power_archive/power_data_YYYY-MM_<original_filename>.csv   downloaded data
 power_archive/power_data_YYYY-MM_NO_DATA                   no-data marker
 power_data.db                                               SQLite database
+lastrun.log                                                 output of the last run
 ```
 
 ## Database Schema

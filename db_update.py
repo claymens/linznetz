@@ -137,7 +137,7 @@ def main(show_last: bool = False) -> None:
         print("Database is up to date — no files changed since last run.")
     else:
         total = conn.execute("SELECT COUNT(*) FROM consumption").fetchone()[0]
-        print(f"\n✓ Done — {updated} file(s) imported, {total} total rows in DB")
+        print(f"\n✅ Done — {updated} file(s) imported, {total} total rows in DB")
 
     set_last_run(conn)
     if show_last:

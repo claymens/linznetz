@@ -13,9 +13,9 @@ load_dotenv()
 
 DEBUG = "--debug" in sys.argv
 
-OK   = "\033[42m\033[97m ✓ \033[0m"
-FAIL = "\033[41m\033[97m ✗ \033[0m"
-WARN = "\033[43m\033[30m ⚠ \033[0m"
+OK   = "✅ "
+FAIL = "❌ "
+WARN = "⚠️  "
 
 # --- CONFIGURATION ---
 USER = os.getenv("LINZNETZ_USER", "YOUR_USERNAME")
