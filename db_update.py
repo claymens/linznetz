@@ -138,8 +138,7 @@ def main(show_last: bool = False) -> None:
     else:
         total = conn.execute("SELECT COUNT(*) FROM consumption").fetchone()[0]
         print(f"\n✅ Done — {updated} file(s) imported, {total} total rows in DB")
-
-    set_last_run(conn)
+        set_last_run(conn)
     if show_last:
         print_last_entries(conn)
     conn.close()
