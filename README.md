@@ -53,6 +53,11 @@ python main.py        # download + update database
 python main.py --ha   # download + update database + push to Home Assistant
 ```
 
+To run daily at 02:21 via cron (`crontab -e`):
+```
+21 2 * * * cd /path/to/linznet && venv/bin/python main.py --ha >> logs/main.log 2>&1
+```
+
 Or run the steps individually:
 
 ### 1. Download data from portal
