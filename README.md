@@ -10,7 +10,7 @@ Scrapes quarter-hourly power consumption data from the LINZ NETZ portal, stores 
 
 | File | Purpose |
 |------|---------|
-| `main.py` | Runs `get_data.py` then `db_update.py` in sequence |
+| `main.py` | Runs `get_data.py` then `db_update.py`; optionally `ha_import.py` with `--ha` |
 | `get_data.py` | Downloads CSVs from the LINZ NETZ portal via Playwright |
 | `db_update.py` | Imports CSVs from `power_archive/` into `power_data.db` |
 | `viewer.html` | Browser-based viewer for the SQLite database |
@@ -39,6 +39,10 @@ LINZNETZ_PWD=your_password
 START_MONTH=2024-01
 # END_MONTH defaults to the current month if omitted
 # END_MONTH=2024-12
+
+# Optional — required only for python main.py --ha
+# HA_URL=ws://192.168.x.x:8123/api/websocket
+# HA_TOKEN=your_long_lived_access_token
 ```
 
 ## Usage
@@ -182,6 +186,8 @@ Pushes the full hourly history (~26 000 entries per series) to HA. No restart re
 3. Search for **Linz Netz Grid** and select it
 4. Optionally add **Linz Netz Community** as a second source or Solar source.
 5. Save — historical data appears immediately
+
+> **Note:** HA will show a warning that `sensor.linz_netz_*` entities are unavailable. This is expected — the SQL sensors cannot read the file because `power_data.db` is not on the machine running HA. The Energy Dashboard data comes entirely from the statistics import and is unaffected by this warning.
 
 ## License
 
