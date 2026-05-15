@@ -2,7 +2,9 @@
 
 ![Vibe Coded](https://img.shields.io/badge/coded-by%20vibes-purple?style=for-the-badge)
 
-Scrapes quarter-hourly power consumption data from the LINZ NETZ portal, stores it in a SQLite database, and provides a browser-based viewer.
+> **Disclaimer:** This project was built purely for private pleasure to quickly have something working. It was not developed with any real requirements for code quality, robustness, or production readiness. Use at your own risk.
+
+Scrapes quarter-hourly power consumption data from the LINZ NETZ portal, stores it in a SQLite database, and provides a browser-based viewer. Optionally pushes the data to Home Assistant. Intended to run daily as a cron job.
 
 ## Files
 
@@ -12,6 +14,7 @@ Scrapes quarter-hourly power consumption data from the LINZ NETZ portal, stores 
 | `get_data.py` | Downloads CSVs from the LINZ NETZ portal via Playwright |
 | `db_update.py` | Imports CSVs from `power_archive/` into `power_data.db` |
 | `viewer.html` | Browser-based viewer for the SQLite database |
+| `ha_import.py` | Pushes history to Home Assistant for the Energy Dashboard (optional) |
 
 ## Setup
 
@@ -42,7 +45,8 @@ START_MONTH=2024-01
 
 ### Run everything at once
 ```bash
-python main.py
+python main.py        # download + update database
+python main.py --ha   # download + update database + push to Home Assistant
 ```
 
 Or run the steps individually:
@@ -108,6 +112,76 @@ Table: `consumption`
 | `EN` | Non-measured, not trusted |
 | `F` | Community data absent — `grid_kwh` equals `energy_kwh`, `community_kwh` is 0 |
 | *(null)* | No community processing yet — `grid_kwh` equals `energy_kwh`, `community_kwh` is 0 |
+
+## Home Assistant Integration (optional)
+
+Two things work together to give the Energy Dashboard full historical data:
+
+1. **SQL sensors** in `configuration.yaml` — query `power_data.db` directly in Home Assistant to register the entities and keep their current value up to date.
+
+2. **`ha_import.py`** — triggered via `python main.py --ha`, reads `power_data.db`, and pushes the complete hourly history into HA's statistics database under those same entity IDs via the WebSocket API.
+
+The SQL sensors must exist in HA before running the import. Re-running `ha_import.py` after a new `python main.py` is safe — existing entries are updated, new ones are appended.
+
+### Step 1 — Add sensors to `configuration.yaml`
+
+Add the following and **restart Home Assistant** (**Developer Tools → YAML → Restart**).
+
+```yaml
+sql:
+  - name: "Linz Netz Energy"
+    db_url: sqlite:////config/power_data.db
+    query: "SELECT ROUND(SUM(energy_kwh), 4) AS value FROM consumption;"
+    column: value
+    unit_of_measurement: kWh
+    device_class: energy
+    state_class: total_increasing
+
+  - name: "Linz Netz Grid"
+    db_url: sqlite:////config/power_data.db
+    query: "SELECT ROUND(SUM(grid_kwh), 4) AS value FROM consumption;"
+    column: value
+    unit_of_measurement: kWh
+    device_class: energy
+    state_class: total_increasing
+
+  - name: "Linz Netz Community"
+    db_url: sqlite:////config/power_data.db
+    query: "SELECT ROUND(SUM(community_kwh), 4) AS value FROM consumption;"
+    column: value
+    unit_of_measurement: kWh
+    device_class: energy
+    state_class: total_increasing
+```
+
+After the restart, verify the entities appear under **Developer Tools → States** as `sensor.linz_netz_energy`, `sensor.linz_netz_grid`, `sensor.linz_netz_community`.
+
+### Step 2 — Create a Long-Lived Access Token in HA
+
+**Profile → Security → Long-Lived Access Tokens → Create token** — copy it, shown only once.
+
+### Step 3 — Configure `.env`
+
+```
+HA_URL=ws://homeassistant.local:8123/api/websocket
+HA_TOKEN=your_long_lived_access_token
+```
+
+### Step 4 — Run the import
+
+```bash
+python ha_import.py
+```
+
+Pushes the full hourly history (~26 000 entries per series) to HA. No restart required afterwards.
+
+### Step 5 — Configure the Energy Dashboard
+
+1. **Settings → Dashboards → Energy**
+2. Under **Electricity grid → Grid consumption**, click **Add consumption**
+3. Search for **Linz Netz Grid** and select it
+4. Optionally add **Linz Netz Community** as a second source or Solar source.
+5. Save — historical data appears immediately
 
 ## License
 
