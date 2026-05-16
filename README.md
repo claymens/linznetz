@@ -33,7 +33,7 @@ source venv/bin/activate.fish  # or activate (bash)
 ### 2. Install Dependencies
 ```bash
 pip install -r requirements.txt
-playwright install
+playwright install chromium --only-shell
 ```
 
 ### 3. Configure Credentials
