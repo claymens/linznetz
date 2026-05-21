@@ -151,6 +151,12 @@ td.num { text-align: right; font-family: 'SF Mono', 'Consolas', monospace; }
     <button class="btn" onclick="pickAndLoad()">📂 Reload DB</button>
     <button class="btn" onclick="clearFilters()">✕ Clear filters</button>
     <button class="btn btn-primary" onclick="exportCSV()">⬇ Export filtered CSV</button>
+    <label style="font-size:12px;color:var(--muted);margin-left:8px">Date range:</label>
+    <input type="date" id="f_date_from" style="padding:4px 7px;border:1px solid var(--border);border-radius:5px;font-size:12px"
+           onchange="setFilter('date_from', this.value)">
+    <span style="color:var(--muted);font-size:12px">→</span>
+    <input type="date" id="f_date_to" style="padding:4px 7px;border:1px solid var(--border);border-radius:5px;font-size:12px"
+           onchange="setFilter('date_to', this.value)">
     <span id="resultCount"></span>
   </div>
 
@@ -211,7 +217,7 @@ const PAGE_SIZE = 100;
 let db = null;
 let sortCol = 'timestamp_from';
 let sortDir = 'ASC';
-let filters = { ts_from:'', ts_to:'', energy_min:'', energy_max:'', grid_min:'', grid_max:'', comm_min:'', comm_max:'', status:'' };
+let filters = { ts_from:'', ts_to:'', date_from:'', date_to:'', energy_min:'', energy_max:'', grid_min:'', grid_max:'', comm_min:'', comm_max:'', status:'' };
 let currentPage = 1;
 let totalRows = 0;
 
@@ -390,8 +396,10 @@ function esc(s) { return String(s).replace(/'/g, "''"); }
 
 function buildWhere() {
   const parts = [];
-  if (filters.ts_from)    parts.push(`timestamp_from LIKE '${esc(filters.ts_from)}%'`);
-  if (filters.ts_to)      parts.push(`timestamp_to LIKE '${esc(filters.ts_to)}%'`);
+  if (filters.ts_from)   parts.push(`timestamp_from LIKE '${esc(filters.ts_from)}%'`);
+  if (filters.ts_to)     parts.push(`timestamp_to LIKE '${esc(filters.ts_to)}%'`);
+  if (filters.date_from) parts.push(`timestamp_from >= '${esc(filters.date_from)}'`);
+  if (filters.date_to)   parts.push(`timestamp_from <= '${esc(filters.date_to)} 23:59:59'`);
   if (filters.energy_min !== '') parts.push(`energy_kwh >= ${+filters.energy_min}`);
   if (filters.energy_max !== '') parts.push(`energy_kwh <= ${+filters.energy_max}`);
   if (filters.grid_min   !== '') parts.push(`grid_kwh >= ${+filters.grid_min}`);
@@ -532,9 +540,11 @@ function goPage(p) {
 }
 
 function clearFilters() {
-  filters = { ts_from:'', ts_to:'', energy_min:'', energy_max:'', grid_min:'', grid_max:'', comm_min:'', comm_max:'', status:'' };
+  filters = { ts_from:'', ts_to:'', date_from:'', date_to:'', energy_min:'', energy_max:'', grid_min:'', grid_max:'', comm_min:'', comm_max:'', status:'' };
   document.querySelectorAll('thead tr.col-filters input').forEach(el => el.value = '');
   document.querySelectorAll('thead tr.col-filters select').forEach(el => el.value = '');
+  document.getElementById('f_date_from').value = '';
+  document.getElementById('f_date_to').value = '';
   currentPage = 1;
   renderTable();
 }
