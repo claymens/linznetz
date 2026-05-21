@@ -154,7 +154,7 @@ def run_archiver():
                 viertel_label.wait_for(state="visible", timeout=TIMEOUT)
                 # Find the associated radio input via the label's `for` attribute
                 radio_id = page.evaluate(
-                    'document.querySelector(\'label:has-text("Viertelstundenwerte")\')?.htmlFor'
+                    'Array.from(document.querySelectorAll("label")).find(l => l.textContent.trim() === "Viertelstundenwerte")?.htmlFor'
                 )
                 is_checked = page.evaluate(
                     f'document.getElementById("{radio_id}")?.checked'
