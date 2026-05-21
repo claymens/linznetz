@@ -146,17 +146,35 @@ def run_archiver():
             # Select "Viertelstundenwerte" once before the loop.
             # Its AJAX handler (u:"myForm1") redraws the whole form, resetting date fields —
             # so must be done before filling dates.
+            # NOTE: avoid selecting by j_idt* — those IDs are dynamic JSF tokens that differ
+            # across Chromium versions and page renders, causing silent fallback to daily data.
             print("[4/5] Selecting Viertelstundenwerte granularity...")
             try:
-                is_checked = page.evaluate('document.querySelector(\'input[id="myForm1:j_idt1435:grid_eval:selectedClass:1"]\').checked')
+                viertel_label = page.get_by_text("Viertelstundenwerte", exact=True).first
+                viertel_label.wait_for(state="visible", timeout=TIMEOUT)
+                # Find the associated radio input via the label's `for` attribute
+                radio_id = page.evaluate(
+                    'document.querySelector(\'label:has-text("Viertelstundenwerte")\')?.htmlFor'
+                )
+                is_checked = page.evaluate(
+                    f'document.getElementById("{radio_id}")?.checked'
+                ) if radio_id else False
                 if not is_checked:
-                    # Click the visible label — browser native label-for handling checks the radio
-                    # and fires the onchange PrimeFaces AJAX that redraws myForm1
-                    page.evaluate('document.querySelector(\'label[for="myForm1:j_idt1435:grid_eval:selectedClass:1"]\').click()')
+                    viertel_label.click()
                     page.wait_for_load_state("networkidle", timeout=TIMEOUT)
+                # Verify the radio is now actually checked
+                is_checked_after = page.evaluate(
+                    f'document.getElementById("{radio_id}")?.checked'
+                ) if radio_id else None
+                if not is_checked_after:
+                    raise RuntimeError(
+                        f"Viertelstundenwerte radio (id={radio_id!r}) still not checked after click — "
+                        "portal would return daily data; aborting to avoid wrong granularity."
+                    )
                 print(f"  {OK}Selected 'Viertelstundenwerte'")
             except Exception as e:
-                print(f"  {WARN}Viertelstundenwerte error: {e}")
+                print(f"  {FAIL}Viertelstundenwerte error: {e}")
+                return
 
             # Prime the server-side date bean with one Anzeigen click using the form's
             # current (default) dates. Without this, the first real iteration always sends
