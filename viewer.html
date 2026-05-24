@@ -166,10 +166,8 @@ td.num { text-align: right; font-family: 'SF Mono', 'Consolas', monospace; }
           <th onclick="setSort('community_status')">Status</th>
         </tr>
         <tr class="col-filters">
-          <th><input type="text" placeholder="e.g. 2025-05" id="f_ts_from"
-                     oninput="setFilter('ts_from', this.value)"></th>
-          <th><input type="text" placeholder="e.g. 2025-05"
-                     oninput="setFilter('ts_to', this.value)"></th>
+          <th><input type="date" id="f_date_from" onchange="setFilter('date_from', this.value, true)"></th>
+          <th><input type="date" id="f_date_to" onchange="setFilter('date_to', this.value, true)"></th>
           <th><div class="range-pair">
             <input type="number" placeholder="min" step="any" id="f_energy_min"
                    oninput="setFilter('energy_min', this.value)">
@@ -188,7 +186,7 @@ td.num { text-align: right; font-family: 'SF Mono', 'Consolas', monospace; }
             <input type="number" placeholder="max" step="any" id="f_comm_max"
                    oninput="setFilter('comm_max', this.value)">
           </div></th>
-          <th><select id="f_status" onchange="setFilter('status', this.value)">
+          <th><select id="f_status" onchange="setFilter('status', this.value, true)">
             <option value="">All</option>
             <option value="M">M — Measured</option>
             <option value="EB">EB — Non-measured trusted</option>
@@ -211,11 +209,12 @@ const PAGE_SIZE = 100;
 let db = null;
 let sortCol = 'timestamp_from';
 let sortDir = 'ASC';
-let filters = { ts_from:'', ts_to:'', energy_min:'', energy_max:'', grid_min:'', grid_max:'', comm_min:'', comm_max:'', status:'' };
+const COLS = ['timestamp_from','timestamp_to','energy_kwh','grid_kwh','community_kwh','community_status'];
+const DEFAULT_FILTERS = { date_from:'', date_to:'', energy_min:'', energy_max:'', grid_min:'', grid_max:'', comm_min:'', comm_max:'', status:'' };
+
+let filters = { ...DEFAULT_FILTERS };
 let currentPage = 1;
 let totalRows = 0;
-
-const COLS = ['timestamp_from','timestamp_to','energy_kwh','grid_kwh','community_kwh','community_status'];
 
 // ── File handle persistence (File System Access API + IndexedDB) ─────────────
 
@@ -298,6 +297,9 @@ initSqlJs({ locateFile: f => `https://cdn.jsdelivr.net/npm/sql.js@1.10.3/dist/${
 function loadDb(data) {
   if (db) db.close();
   db = new window.SQL.Database(data);
+  ['timestamp_from','timestamp_to','energy_kwh','grid_kwh','community_kwh','community_status'].forEach(col =>
+    db.run(`CREATE INDEX IF NOT EXISTS idx_${col} ON consumption(${col})`)
+  );
   document.getElementById('loading').style.display = 'none';
   document.getElementById('dropzone').style.display = 'none';
   document.getElementById('app').style.display = 'block';
@@ -388,16 +390,19 @@ function handleDrop(e) {
 
 function esc(s) { return String(s).replace(/'/g, "''"); }
 
+function pushRange(parts, col, minKey, maxKey) {
+  const lo = +filters[minKey], hi = +filters[maxKey];
+  if (filters[minKey] !== '' && isFinite(lo)) parts.push(`${col} >= ${lo}`);
+  if (filters[maxKey] !== '' && isFinite(hi)) parts.push(`${col} <= ${hi}`);
+}
+
 function buildWhere() {
   const parts = [];
-  if (filters.ts_from)    parts.push(`timestamp_from LIKE '${esc(filters.ts_from)}%'`);
-  if (filters.ts_to)      parts.push(`timestamp_to LIKE '${esc(filters.ts_to)}%'`);
-  if (filters.energy_min !== '') parts.push(`energy_kwh >= ${+filters.energy_min}`);
-  if (filters.energy_max !== '') parts.push(`energy_kwh <= ${+filters.energy_max}`);
-  if (filters.grid_min   !== '') parts.push(`grid_kwh >= ${+filters.grid_min}`);
-  if (filters.grid_max   !== '') parts.push(`grid_kwh <= ${+filters.grid_max}`);
-  if (filters.comm_min   !== '') parts.push(`community_kwh >= ${+filters.comm_min}`);
-  if (filters.comm_max   !== '') parts.push(`community_kwh <= ${+filters.comm_max}`);
+  if (filters.date_from) parts.push(`timestamp_from >= '${esc(filters.date_from)}'`);
+  if (filters.date_to)   parts.push(`timestamp_from <= '${esc(filters.date_to)} 23:59:59'`);
+  pushRange(parts, 'energy_kwh',    'energy_min', 'energy_max');
+  pushRange(parts, 'grid_kwh',      'grid_min',   'grid_max');
+  pushRange(parts, 'community_kwh', 'comm_min',   'comm_max');
   if (filters.status) {
     parts.push(filters.status === '__null__'
       ? `community_status IS NULL`
@@ -514,16 +519,20 @@ function renderPagination() {
 // ── Controls ─────────────────────────────────────────────────────────────────
 
 function setSort(col) {
+  if (!COLS.includes(col)) return;
   sortDir = (sortCol === col && sortDir === 'ASC') ? 'DESC' : 'ASC';
   sortCol = col;
   currentPage = 1;
   renderTable();
 }
 
-function setFilter(key, value) {
+let _debTimer = null;
+function setFilter(key, value, immediate) {
   filters[key] = value ?? '';
   currentPage = 1;
-  renderTable();
+  if (immediate) { renderTable(); return; }
+  clearTimeout(_debTimer);
+  _debTimer = setTimeout(renderTable, 150);
 }
 
 function goPage(p) {
@@ -532,9 +541,8 @@ function goPage(p) {
 }
 
 function clearFilters() {
-  filters = { ts_from:'', ts_to:'', energy_min:'', energy_max:'', grid_min:'', grid_max:'', comm_min:'', comm_max:'', status:'' };
-  document.querySelectorAll('thead tr.col-filters input').forEach(el => el.value = '');
-  document.querySelectorAll('thead tr.col-filters select').forEach(el => el.value = '');
+  filters = { ...DEFAULT_FILTERS };
+  document.querySelectorAll('thead tr.col-filters input, thead tr.col-filters select').forEach(el => el.value = '');
   currentPage = 1;
   renderTable();
 }
@@ -550,11 +558,9 @@ function exportCSV() {
   const lines = [header, ...rows.map(r =>
     [r.timestamp_from, r.timestamp_to, r.energy_kwh, r.grid_kwh, r.community_kwh, r.community_status ?? ''].join(';')
   )];
-  const a = Object.assign(document.createElement('a'), {
-    href: URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/csv' })),
-    download: 'power_data_export.csv'
-  });
-  a.click();
+  const url = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/csv' }));
+  Object.assign(document.createElement('a'), { href: url, download: 'power_data_export.csv' }).click();
+  setTimeout(() => URL.revokeObjectURL(url), 100);
 }
 </script>
 </body>
