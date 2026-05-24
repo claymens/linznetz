@@ -53,30 +53,29 @@ def set_last_import() -> None:
     conn.close()
 
 
-def get_complete_day_window() -> tuple[str | None, str | None]:
-    """Return (since_hour, until_hour) covering the last 3 complete days.
+def get_complete_until_hour() -> str | None:
+    """Return midnight after the last complete day, or None if no complete days exist.
 
-    A day is complete when it has >= 90 quarter-hour readings (handles DST
-    transitions: spring-forward days have 92, fall-back days have 100).
-    until_hour is the exclusive upper bound (= midnight starting the day after
-    the last complete day), so no partial-day data ever reaches HA.
+    A day is complete when it has >= 92 quarter-hour readings. 92 is the minimum
+    for any real complete day (spring-forward loses 1h → 23h × 4 = 92 slots).
+    Normal and fall-back days produce 96 stored rows (fall-back duplicates are
+    dropped by the PRIMARY KEY on timestamp_from).
     """
     conn = sqlite3.connect(DB_PATH)
     row = conn.execute("""
         SELECT DATE(timestamp_from) AS day
         FROM consumption
         GROUP BY day
-        HAVING COUNT(*) >= 90
+        HAVING COUNT(*) >= 92
         ORDER BY day DESC
         LIMIT 1
     """).fetchone()
     conn.close()
     if not row:
-        return None, None
+        return None
     last_complete = datetime.strptime(row[0], "%Y-%m-%d")
-    since = last_complete - timedelta(days=3)
     until = last_complete + timedelta(days=1)
-    return since.strftime("%Y-%m-%dT%H:00:00"), until.strftime("%Y-%m-%dT%H:00:00")
+    return until.strftime("%Y-%m-%dT%H:00:00")
 
 
 def load_hourly(col: str, since_hour: str | None, until_hour: str | None) -> list[dict]:
@@ -105,9 +104,10 @@ def load_hourly(col: str, since_hour: str | None, until_hour: str | None) -> lis
 
 
 async def import_series(ws, msg_id: int, statistic_id: str, name: str, col: str,
-                        since_hour: str | None, until_hour: str | None) -> int:
+                        since_hour: str | None, until_hour: str | None) -> tuple[int, bool]:
     stats = load_hourly(col, since_hour, until_hour)
     print(f"{name}: {len(stats)} entries")
+    all_ok = True
     for i in range(0, len(stats), CHUNK):
         chunk = stats[i : i + CHUNK]
         await ws.send(json.dumps({
@@ -125,11 +125,13 @@ async def import_series(ws, msg_id: int, statistic_id: str, name: str, col: str,
         }))
         result = json.loads(await ws.recv())
         ok = result.get("success", False)
+        if not ok:
+            all_ok = False
         end = min(i + CHUNK, len(stats))
         print(f"  {'✅' if ok else '❌'} entries {i + 1}–{end}" +
               (f"  error: {result.get('error')}" if not ok else ""))
         msg_id += 1
-    return msg_id
+    return msg_id, all_ok
 
 
 async def main():
@@ -147,14 +149,15 @@ async def main():
             print("Database unchanged since last import — nothing to do.")
             return
 
-    since_window, until_hour = get_complete_day_window()
+    until_hour = get_complete_until_hour()
     if not until_hour:
         print("No complete day data found — nothing to import.")
         return
 
     if last_import:
-        since_hour = since_window
-        print(f"Incremental import {since_hour} → {until_hour} (complete days only)\n")
+        since_dt   = datetime.fromisoformat(last_import)
+        since_hour = since_dt.strftime("%Y-%m-%dT%H:00:00")
+        print(f"Incremental import from {since_hour} → {until_hour} (complete days only)\n")
     else:
         since_hour = None
         print(f"First import — sending full history up to {until_hour}\n")
@@ -171,14 +174,20 @@ async def main():
                 raise SystemExit("Authentication failed — check HA_TOKEN in .env")
             print("Authenticated.\n")
 
+            all_ok = True
             msg_id = 1
             for statistic_id, name, col in SERIES:
-                msg_id = await import_series(ws, msg_id, statistic_id, name, col,
-                                             since_hour, until_hour)
+                msg_id, ok = await import_series(ws, msg_id, statistic_id, name, col,
+                                                 since_hour, until_hour)
+                if not ok:
+                    all_ok = False
                 print()
 
-        set_last_import()
-        print("Import complete.")
+        if all_ok:
+            set_last_import()
+            print("Import complete.")
+        else:
+            print("Import finished with errors — ha_last_import not updated, will retry next run.")
 
     except OSError as e:
         raise SystemExit(f"Cannot reach Home Assistant at {HA_URL}\n  {e}")
