@@ -1,8 +1,7 @@
 """
 Push power_data.db statistics into Home Assistant for the Energy Dashboard.
 Run once to backfill all history; safe to re-run after new data is imported —
-only entries newer than the last import are sent (with a 2-hour overlap to
-catch any incomplete hours from the previous run).
+only complete days are ever sent, so HA never shows a partial-day bar.
 
 Requires in .env:
   HA_URL   = ws://10.0.0.x:8123/api/websocket
@@ -29,6 +28,7 @@ HA_TOKEN = os.getenv("HA_TOKEN")
 TZ       = ZoneInfo("Europe/Vienna")
 CHUNK    = 2000  # hourly entries per WebSocket message
 
+
 SERIES = [
     ("sensor.linz_netz_energy",    "Linz Netz Energy",    "energy_kwh"),
     ("sensor.linz_netz_grid",      "Linz Netz Grid",      "grid_kwh"),
@@ -53,9 +53,35 @@ def set_last_import() -> None:
     conn.close()
 
 
-def load_hourly(col: str, since_hour: str | None) -> list[dict]:
+def get_complete_day_window() -> tuple[str | None, str | None]:
+    """Return (since_hour, until_hour) covering the last 3 complete days.
+
+    A day is complete when it has >= 90 quarter-hour readings (handles DST
+    transitions: spring-forward days have 92, fall-back days have 100).
+    until_hour is the exclusive upper bound (= midnight starting the day after
+    the last complete day), so no partial-day data ever reaches HA.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    row = conn.execute("""
+        SELECT DATE(timestamp_from) AS day
+        FROM consumption
+        GROUP BY day
+        HAVING COUNT(*) >= 90
+        ORDER BY day DESC
+        LIMIT 1
+    """).fetchone()
+    conn.close()
+    if not row:
+        return None, None
+    last_complete = datetime.strptime(row[0], "%Y-%m-%d")
+    since = last_complete - timedelta(days=3)
+    until = last_complete + timedelta(days=1)
+    return since.strftime("%Y-%m-%dT%H:00:00"), until.strftime("%Y-%m-%dT%H:00:00")
+
+
+def load_hourly(col: str, since_hour: str | None, until_hour: str | None) -> list[dict]:
     """Aggregate 15-min intervals into hourly buckets with a running cumulative sum.
-    Always computes the full cumulative sum; only returns entries >= since_hour."""
+    Always computes the full cumulative sum; only returns entries in [since_hour, until_hour)."""
     conn = sqlite3.connect(DB_PATH)
     rows = conn.execute(f"""
         SELECT strftime('%Y-%m-%dT%H:00:00', timestamp_from) AS hour,
@@ -70,15 +96,17 @@ def load_hourly(col: str, since_hour: str | None) -> list[dict]:
     for hour, kwh in rows:
         kwh = kwh or 0.0
         running = round(running + kwh, 4)
-        if since_hour is None or hour >= since_hour:
+        after_since = since_hour is None or hour >= since_hour
+        before_until = until_hour is None or hour < until_hour
+        if after_since and before_until:
             dt = datetime.fromisoformat(hour).replace(tzinfo=TZ)
             result.append({"start": dt.isoformat(), "sum": running, "state": kwh})
     return result
 
 
 async def import_series(ws, msg_id: int, statistic_id: str, name: str, col: str,
-                        since_hour: str | None) -> int:
-    stats = load_hourly(col, since_hour)
+                        since_hour: str | None, until_hour: str | None) -> int:
+    stats = load_hourly(col, since_hour, until_hour)
     print(f"{name}: {len(stats)} entries")
     for i in range(0, len(stats), CHUNK):
         chunk = stats[i : i + CHUNK]
@@ -119,13 +147,17 @@ async def main():
             print("Database unchanged since last import — nothing to do.")
             return
 
+    since_window, until_hour = get_complete_day_window()
+    if not until_hour:
+        print("No complete day data found — nothing to import.")
+        return
+
     if last_import:
-        since_dt   = datetime.fromisoformat(last_import) - timedelta(hours=2)
-        since_hour = since_dt.strftime("%Y-%m-%dT%H:00:00")
-        print(f"Incremental import since {since_hour}\n")
+        since_hour = since_window
+        print(f"Incremental import {since_hour} → {until_hour} (complete days only)\n")
     else:
         since_hour = None
-        print("First import — sending full history\n")
+        print(f"First import — sending full history up to {until_hour}\n")
 
     print(f"Connecting to {HA_URL} …")
     try:
@@ -141,7 +173,8 @@ async def main():
 
             msg_id = 1
             for statistic_id, name, col in SERIES:
-                msg_id = await import_series(ws, msg_id, statistic_id, name, col, since_hour)
+                msg_id = await import_series(ws, msg_id, statistic_id, name, col,
+                                             since_hour, until_hour)
                 print()
 
         set_last_import()
