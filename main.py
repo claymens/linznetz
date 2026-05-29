@@ -23,7 +23,15 @@ def run():
     from get_data import run_archiver
     from db_update import main as update_db
 
-    ha = "--ha" in sys.argv
+    ha_full = "--ha_full" in sys.argv
+    ha = "--ha" in sys.argv or ha_full
+
+    ha_full_period = None
+    if ha_full:
+        idx = sys.argv.index("--ha_full")
+        if idx + 1 < len(sys.argv) and not sys.argv[idx + 1].startswith("-"):
+            ha_full_period = sys.argv[idx + 1]
+
     steps = 3 if ha else 2
 
     print("━" * 50)
@@ -42,7 +50,7 @@ def run():
         print("━" * 50)
         print(f"  Step 3/{steps} — Pushing to Home Assistant")
         print("━" * 50)
-        asyncio.run(ha_import())
+        asyncio.run(ha_import(full=ha_full, last_period=ha_full_period))
 
     print(f"{OK}All done.\n")
 
