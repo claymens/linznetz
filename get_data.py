@@ -54,7 +54,7 @@ def debug_page(page, step_name):
     print(f"  [{step_name}] URL: {page.url}")
     print(f"  [{step_name}] Title: {page.title()}")
 
-def run_archiver():
+def run_archiver(force_months: list[str] | None = None, force_all: bool = False):
 
     monthly_ranges = generate_monthly_ranges(START_MONTH, END_MONTH)
 
@@ -70,6 +70,19 @@ def run_archiver():
         for f in os.listdir(DOWNLOAD_PATH):
             if f.startswith(f"power_data_{current_month}_"):
                 os.remove(os.path.join(DOWNLOAD_PATH, f))
+
+    # Force re-download: either all months or a specific list
+    if force_all:
+        for f in os.listdir(DOWNLOAD_PATH):
+            if f.startswith("power_data_"):
+                os.remove(os.path.join(DOWNLOAD_PATH, f))
+        print(f"  Cleared all cached CSVs (full forced re-download)")
+    elif force_months:
+        for month in force_months:
+            for f in os.listdir(DOWNLOAD_PATH):
+                if f.startswith(f"power_data_{month}_"):
+                    os.remove(os.path.join(DOWNLOAD_PATH, f))
+                    print(f"  Removed cached {f} (forced re-download)")
 
     pending = [r for r in monthly_ranges if not any(
         f.startswith(f"power_data_{r['month']}_") for f in os.listdir(DOWNLOAD_PATH)

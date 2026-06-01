@@ -55,6 +55,17 @@ def set_last_import(until_hour: str) -> None:
         "INSERT OR REPLACE INTO meta (key, value) VALUES ('ha_last_until', ?)",
         (until_hour,)
     )
+    # Track the highest boundary ever sent. If a day later loses rows and falls below
+    # the complete-day threshold, HA still holds entries for that range with old
+    # cumulative sums. ha_max_until lets us detect and overwrite those stale entries.
+    prev_max = conn.execute(
+        "SELECT value FROM meta WHERE key = 'ha_max_until'"
+    ).fetchone()
+    if not prev_max or until_hour > prev_max[0]:
+        conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('ha_max_until', ?)",
+            (until_hour,)
+        )
     conn.commit()
     conn.close()
 
@@ -150,16 +161,23 @@ async def main(full: bool = False, last_period: str | None = None):
         print("No complete day data found — nothing to import.")
         return
 
+    # Extend the upper bound to cover any entries HA may hold from a previous run
+    # where more days were complete. Without this, a day that later loses rows (portal
+    # revision drops it below 92 readings) leaves a stale HA entry with an old
+    # cumulative sum — producing a negative spike at that boundary after any reimport.
+    ha_max_until = get_meta("ha_max_until")
+    effective_until = max(until_hour, ha_max_until) if ha_max_until else until_hour
+    if effective_until != until_hour:
+        print(f"Note: extending upper bound from {until_hour} to {effective_until} "
+              f"to overwrite stale HA entries from a previous import.\n")
+
     if full:
         if last_period == "1m":
-            now = datetime.now()
-            first_of_this_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-            first_of_last_month = (first_of_this_month - timedelta(days=1)).replace(day=1)
-            since_hour = first_of_last_month.strftime("%Y-%m-%dT%H:00:00")
-            print(f"Full reimport for last month from {since_hour} → {until_hour}\n")
+            since_hour = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%dT%H:00:00")
+            print(f"Full reimport for last 30 days from {since_hour} → {effective_until}\n")
         else:
             since_hour = None
-            print(f"Full reimport — sending complete history up to {until_hour}\n")
+            print(f"Full reimport — sending complete history up to {effective_until}\n")
     else:
         last_import = get_meta("ha_last_import")
         last_run    = get_meta("last_run")  # unix timestamp written by db_update.py
@@ -174,10 +192,10 @@ async def main(full: bool = False, last_period: str | None = None):
         last_until = get_meta("ha_last_until")
         if last_until:
             since_hour = last_until
-            print(f"Incremental import from {since_hour} → {until_hour} (complete days only)\n")
+            print(f"Incremental import from {since_hour} → {effective_until} (complete days only)\n")
         else:
             since_hour = None
-            print(f"First import — sending full history up to {until_hour}\n")
+            print(f"First import — sending full history up to {effective_until}\n")
 
     print(f"Connecting to {HA_URL} …")
     try:
@@ -195,13 +213,13 @@ async def main(full: bool = False, last_period: str | None = None):
             msg_id = 1
             for statistic_id, name, col in SERIES:
                 msg_id, ok = await import_series(ws, msg_id, statistic_id, name, col,
-                                                 since_hour, until_hour)
+                                                 since_hour, effective_until)
                 if not ok:
                     all_ok = False
                 print()
 
         if all_ok:
-            set_last_import(until_hour)
+            set_last_import(effective_until)
             print("Import complete.")
         else:
             print("Import finished with errors — ha_last_import not updated, will retry next run.")

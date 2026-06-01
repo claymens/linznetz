@@ -55,13 +55,32 @@ START_MONTH=2024-01
 
 ### Run everything at once
 ```bash
-python main.py        # download + update database
-python main.py --ha   # download + update database + push to Home Assistant
+python main.py              # download + update database
+python main.py --ha         # download + update database + push to Home Assistant (incremental)
+python main.py --ha_full 1m # re-download last 30 days from portal + reimport last 30 days into HA
+python main.py --ha_full    # re-download all months from portal + full HA reimport from scratch
 ```
 
-To run daily at 02:21 via cron (`crontab -e`):
+#### `--ha_full 1m` vs `--ha_full`
+
+| Flag | Portal download | HA reimport |
+|------|----------------|-------------|
+| `--ha` | current month only | new complete days only |
+| `--ha_full 1m` | last 30 days (1–2 months) | last 30 days |
+| `--ha_full` | all months (full re-download) | full history |
+
+**`--ha_full 1m` is useful whenever the portal silently revises past readings** — which happens with energy community data and estimated values that get corrected retroactively. Because the portal has a ~2-day lag and sometimes updates values days later, running `--ha_full 1m` periodically ensures those corrections are reflected in Home Assistant.
+
+#### Recommended cron setup
+
+A sensible setup runs the normal job daily and a 30-day reimport once a week to catch late portal updates:
+
 ```
-21 2 * * * cd /path/to/linznet && venv/bin/python main.py --ha
+# Daily at 02:21 — incremental update
+21 2 * * * cd /path/to/linznetz && venv/bin/python main.py --ha
+
+# Every Sunday at 03:00 — re-download last 30 days in case the portal revised past values
+0 3 * * 0 cd /path/to/linznetz && venv/bin/python main.py --ha_full 1m
 ```
 
 Or run the steps individually:
@@ -186,10 +205,10 @@ HA_TOKEN=your_long_lived_access_token
 ### Step 4 — Run the initial import
 
 ```bash
-python ha_import.py
+python main.py --ha_full
 ```
 
-Pushes the full hourly history (~26 000 entries per series) to HA. No restart required afterwards. After this one-time backfill, use `python main.py --ha` (or the cron job) for ongoing incremental updates.
+Re-downloads all months from the portal, updates the database, and pushes the full hourly history to HA. No restart required afterwards. After this one-time backfill, use `python main.py --ha` for ongoing incremental updates.
 
 ### Step 5 — Configure the Energy Dashboard
 
