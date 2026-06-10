@@ -70,6 +70,17 @@ def load_csv(path: str) -> list[tuple]:
     rows = []
     with open(path, newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f, delimiter=";")
+        if not reader.fieldnames:
+            raise ValueError(f"CSV file {path} is empty or has no headers")
+        
+        required_fields = {"Datum von", "Datum bis", "Energiemenge in kWh"}
+        missing = required_fields - set(reader.fieldnames or [])
+        if missing:
+            raise ValueError(
+                f"CSV file {path} missing required columns: {', '.join(missing)}\n"
+                f"Available columns: {', '.join(reader.fieldnames or [])}"
+            )
+        
         for row in reader:
             ts_from = parse_dt(row["Datum von"])
             ts_to   = parse_dt(row["Datum bis"])
@@ -130,7 +141,12 @@ def main(show_last: bool = False) -> None:
                 continue
             month = m.group(1)
 
-            rows = load_csv(path)
+            try:
+                rows = load_csv(path)
+            except (ValueError, KeyError) as e:
+                print(f"  {WARN}Skipping {filename}: {e}")
+                continue
+            
             conn.execute("DELETE FROM consumption WHERE timestamp_from LIKE ?", (f"{month}%",))
             conn.executemany("""
                 INSERT OR IGNORE INTO consumption

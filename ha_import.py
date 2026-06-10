@@ -25,7 +25,7 @@ load_dotenv()
 DB_PATH  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "power_data.db")
 HA_URL   = os.getenv("HA_URL", "ws://homeassistant.local:8123/api/websocket")
 HA_TOKEN = os.getenv("HA_TOKEN")
-TZ       = ZoneInfo("Europe/Vienna")
+TZ       = ZoneInfo(os.getenv("TZ", "Europe/Vienna"))
 CHUNK    = 2000  # hourly entries per WebSocket message
 
 ALLOWED_COLS = {"energy_kwh", "grid_kwh", "community_kwh"}
@@ -95,36 +95,35 @@ def load_hourly(col: str, since_hour: str | None, until_hour: str | None) -> lis
     if col not in ALLOWED_COLS:
         raise ValueError(f"Invalid column: {col!r} — must be one of {sorted(ALLOWED_COLS)}")
 
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("PRAGMA journal_mode=WAL")
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
 
-    where_clauses: list[str] = []
-    params: list[str] = []
-    if since_hour is not None:
-        where_clauses.append("hour >= ?")
-        params.append(since_hour)
-    if until_hour is not None:
-        where_clauses.append("hour < ?")
-        params.append(until_hour)
-    where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+        where_clauses: list[str] = []
+        params: list[str] = []
+        if since_hour is not None:
+            where_clauses.append("hour >= ?")
+            params.append(since_hour)
+        if until_hour is not None:
+            where_clauses.append("hour < ?")
+            params.append(until_hour)
+        where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
 
-    query = f"""
-        SELECT hour, kwh, running
-        FROM (
-            SELECT
-                strftime('%Y-%m-%dT%H:00:00', timestamp_from) AS hour,
-                ROUND(SUM({col}), 4)                           AS kwh,
-                ROUND(SUM(SUM({col})) OVER (
-                    ORDER BY strftime('%Y-%m-%dT%H:00:00', timestamp_from)
-                ), 4)                                          AS running
-            FROM consumption
-            GROUP BY hour
-        )
-        {where_sql}
-        ORDER BY hour
-    """
-    rows = conn.execute(query, params).fetchall()
-    conn.close()
+        query = f"""
+            SELECT hour, kwh, running
+            FROM (
+                SELECT
+                    strftime('%Y-%m-%dT%H:00:00', timestamp_from) AS hour,
+                    ROUND(SUM({col}), 4)                           AS kwh,
+                    ROUND(SUM(SUM({col})) OVER (
+                        ORDER BY strftime('%Y-%m-%dT%H:00:00', timestamp_from)
+                    ), 4)                                          AS running
+                FROM consumption
+                GROUP BY hour
+            )
+            {where_sql}
+            ORDER BY hour
+        """
+        rows = conn.execute(query, params).fetchall()
 
     result = []
     for hour, kwh, running in rows:

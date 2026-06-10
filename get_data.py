@@ -118,10 +118,13 @@ def run_archiver():
         os.path.getsize(os.path.join(DOWNLOAD_PATH, f)) > 0
         and datetime.fromtimestamp(os.path.getmtime(os.path.join(DOWNLOAD_PATH, f))).date() >= today
         for f in current_month_csvs
+        if os.path.exists(os.path.join(DOWNLOAD_PATH, f))  # Safe check: file might be deleted between list and stat
     )
     if not current_month_fresh:
         for f in current_month_csvs:
-            os.remove(os.path.join(DOWNLOAD_PATH, f))
+            filepath = os.path.join(DOWNLOAD_PATH, f)
+            if os.path.exists(filepath):  # Safe check
+                os.remove(filepath)
         marker = _no_data_marker_path(current_month)
         if os.path.exists(marker):
             os.remove(marker)
@@ -134,13 +137,14 @@ def run_archiver():
     stale_markers = _stale_no_data_markers(all_entries)
     for marker in stale_markers:
         marker_path = os.path.join(DOWNLOAD_PATH, marker)
-        os.remove(marker_path)
-        all_entries = os.listdir(DOWNLOAD_PATH)  # refresh snapshot
-        month = marker[len("power_data_"):-len("_NO_DATA")]
-        matching = [r for r in monthly_ranges if r['month'] == month]
-        if matching and matching[0] not in pending:
-            pending.append(matching[0])
-            print(f"  Retrying previously no-data month {month} (marker expired)\n")
+        if os.path.exists(marker_path):  # Safe check
+            os.remove(marker_path)
+            all_entries = os.listdir(DOWNLOAD_PATH)  # refresh snapshot
+            month = marker[len("power_data_"):-len("_NO_DATA")]
+            matching = [r for r in monthly_ranges if r['month'] == month]
+            if matching and matching[0] not in pending:
+                pending.append(matching[0])
+                print(f"  Retrying previously no-data month {month} (marker expired)\n")
 
     if not pending:
         csv_files = [f for f in os.listdir(DOWNLOAD_PATH) if f.endswith(".csv")]
