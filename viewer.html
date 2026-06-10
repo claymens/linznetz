@@ -320,8 +320,10 @@ function renderYearStats() {
 
   const currentYear = new Date().getFullYear().toString();
   const now         = new Date();
-  const projFactor  = (new Date(now.getFullYear() + 1, 0, 1) - new Date(now.getFullYear(), 0, 1))
-                    / Math.max(1, now - new Date(now.getFullYear(), 0, 1));
+  const elapsed     = now - new Date(now.getFullYear(), 0, 1);
+  const yearMs      = new Date(now.getFullYear() + 1, 0, 1) - new Date(now.getFullYear(), 0, 1);
+  // Guard against division by zero (midnight Jan 1) or near-zero elapsed time
+  const projFactor  = elapsed >= 3600000 ? yearMs / elapsed : 1;
 
   function trend(diff) {
     if (diff == null) return '';

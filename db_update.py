@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import csv
 import os
+import re
 import sqlite3
 import sys
 from datetime import datetime
+
+WARN = "⚠️  "
 
 ARCHIVE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "power_archive")
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "power_data.db")
 
 DATE_FORMAT = "%d.%m.%Y %H:%M"
+CSV_PATTERN = re.compile(r"^power_data_(\d{4}-\d{2})_.+\.csv$")
 
 
 def parse_float(value: str) -> float | None:
@@ -107,41 +111,47 @@ def main(show_last: bool = False) -> None:
         print("No CSV files found in power_archive/.")
         return
 
-    conn = sqlite3.connect(DB_PATH)
-    init_db(conn)
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
+        init_db(conn)
 
-    last_run = get_last_run(conn)
-    updated = 0
+        last_run = get_last_run(conn)
+        updated = 0
+        total_rows_inserted = 0
 
-    for filename in csv_files:
-        path = os.path.join(ARCHIVE_PATH, filename)
-        if os.path.getmtime(path) <= last_run:
-            continue
+        for filename in csv_files:
+            path = os.path.join(ARCHIVE_PATH, filename)
+            if os.path.getmtime(path) <= last_run:
+                continue
 
-        # filename format: power_data_YYYY-MM_<original>.csv
-        month = filename[11:18]  # characters 11-17 are always YYYY-MM
+            m = CSV_PATTERN.match(filename)
+            if not m:
+                print(f"  {WARN}Skipping unrecognized filename: {filename}")
+                continue
+            month = m.group(1)
 
-        rows = load_csv(path)
-        conn.execute("DELETE FROM consumption WHERE timestamp_from LIKE ?", (f"{month}%",))
-        conn.executemany("""
-            INSERT OR IGNORE INTO consumption
-                (timestamp_from, timestamp_to, energy_kwh, is_estimated, grid_kwh, community_kwh, community_status)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, rows)
+            rows = load_csv(path)
+            conn.execute("DELETE FROM consumption WHERE timestamp_from LIKE ?", (f"{month}%",))
+            conn.executemany("""
+                INSERT OR IGNORE INTO consumption
+                    (timestamp_from, timestamp_to, energy_kwh, is_estimated, grid_kwh, community_kwh, community_status)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, rows)
+
+            updated += 1
+            total_rows_inserted += len(rows)
+            print(f"  {filename[:40]:<40}  {len(rows):>4} rows")
+
         conn.commit()
 
-        updated += 1
-        print(f"  {filename[:40]:<40}  {len(rows):>4} rows")
-
-    if updated == 0:
-        print("Database is up to date — no files changed since last run.")
-    else:
-        total = conn.execute("SELECT COUNT(*) FROM consumption").fetchone()[0]
-        print(f"\n✅ Done — {updated} file(s) imported, {total} total rows in DB")
-        set_last_run(conn)
-    if show_last:
-        print_last_entries(conn)
-    conn.close()
+        if updated == 0:
+            print("Database is up to date — no files changed since last run.")
+        else:
+            total = conn.execute("SELECT COUNT(*) FROM consumption").fetchone()[0]
+            print(f"\n✅ Done — {updated} file(s) imported ({total_rows_inserted} rows), {total} total rows in DB")
+            set_last_run(conn)
+        if show_last:
+            print_last_entries(conn)
 
 
 if __name__ == "__main__":

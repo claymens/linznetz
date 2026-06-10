@@ -28,6 +28,8 @@ HA_TOKEN = os.getenv("HA_TOKEN")
 TZ       = ZoneInfo("Europe/Vienna")
 CHUNK    = 2000  # hourly entries per WebSocket message
 
+ALLOWED_COLS = {"energy_kwh", "grid_kwh", "community_kwh"}
+
 
 SERIES = [
     ("sensor.linz_netz_energy",    "Linz Netz Energy",    "energy_kwh"),
@@ -37,26 +39,26 @@ SERIES = [
 
 
 def get_meta(key: str) -> str | None:
-    conn = sqlite3.connect(DB_PATH)
-    row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
-    conn.close()
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
     return row[0] if row else None
 
 
 def set_last_import(until_hour: str) -> None:
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute(
-        "INSERT OR REPLACE INTO meta (key, value) VALUES ('ha_last_import', ?)",
-        (datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),)
-    )
-    # Store the actual data boundary so the next incremental run starts from here,
-    # not from the wall-clock time this script ran (which would be after until_hour).
-    conn.execute(
-        "INSERT OR REPLACE INTO meta (key, value) VALUES ('ha_last_until', ?)",
-        (until_hour,)
-    )
-    conn.commit()
-    conn.close()
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('ha_last_import', ?)",
+            (datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),)
+        )
+        # Store the actual data boundary so the next incremental run starts from here,
+        # not from the wall-clock time this script ran (which would be after until_hour).
+        # The boundary hour (until_hour) is re-sent on the next import to allow HA's
+        # recorder/import_statistics to upsert idempotently.
+        conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('ha_last_until', ?)",
+            (until_hour,)
+        )
+        conn.commit()
 
 
 def get_complete_until_hour() -> str | None:
@@ -67,16 +69,15 @@ def get_complete_until_hour() -> str | None:
     Normal and fall-back days produce 96 stored rows (fall-back duplicates are
     dropped by the PRIMARY KEY on timestamp_from).
     """
-    conn = sqlite3.connect(DB_PATH)
-    row = conn.execute("""
-        SELECT DATE(timestamp_from) AS day
-        FROM consumption
-        GROUP BY day
-        HAVING COUNT(*) >= 92
-        ORDER BY day DESC
-        LIMIT 1
-    """).fetchone()
-    conn.close()
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute("""
+            SELECT DATE(timestamp_from) AS day
+            FROM consumption
+            GROUP BY day
+            HAVING COUNT(*) >= 92
+            ORDER BY day DESC
+            LIMIT 1
+        """).fetchone()
     if not row:
         return None
     last_complete = datetime.strptime(row[0], "%Y-%m-%d")
@@ -86,26 +87,49 @@ def get_complete_until_hour() -> str | None:
 
 def load_hourly(col: str, since_hour: str | None, until_hour: str | None) -> list[dict]:
     """Aggregate 15-min intervals into hourly buckets with a running cumulative sum.
-    Always computes the full cumulative sum; only returns entries in [since_hour, until_hour)."""
+
+    Cumulative sum is computed in SQL via a window function so the database
+    handles the full-time aggregation internally. Only rows within
+    [since_hour, until_hour) are returned to Python.
+    """
+    if col not in ALLOWED_COLS:
+        raise ValueError(f"Invalid column: {col!r} — must be one of {sorted(ALLOWED_COLS)}")
+
     conn = sqlite3.connect(DB_PATH)
-    rows = conn.execute(f"""
-        SELECT strftime('%Y-%m-%dT%H:00:00', timestamp_from) AS hour,
-               ROUND(SUM({col}), 4) AS kwh
-        FROM consumption
-        GROUP BY hour
+    conn.execute("PRAGMA journal_mode=WAL")
+
+    where_clauses: list[str] = []
+    params: list[str] = []
+    if since_hour is not None:
+        where_clauses.append("hour >= ?")
+        params.append(since_hour)
+    if until_hour is not None:
+        where_clauses.append("hour < ?")
+        params.append(until_hour)
+    where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+
+    query = f"""
+        SELECT hour, kwh, running
+        FROM (
+            SELECT
+                strftime('%Y-%m-%dT%H:00:00', timestamp_from) AS hour,
+                ROUND(SUM({col}), 4)                           AS kwh,
+                ROUND(SUM(SUM({col})) OVER (
+                    ORDER BY strftime('%Y-%m-%dT%H:00:00', timestamp_from)
+                ), 4)                                          AS running
+            FROM consumption
+            GROUP BY hour
+        )
+        {where_sql}
         ORDER BY hour
-    """).fetchall()
+    """
+    rows = conn.execute(query, params).fetchall()
     conn.close()
 
-    result, running = [], 0.0
-    for hour, kwh in rows:
-        kwh = kwh or 0.0
-        running = round(running + kwh, 4)
-        after_since = since_hour is None or hour >= since_hour
-        before_until = until_hour is None or hour < until_hour
-        if after_since and before_until:
-            dt = datetime.fromisoformat(hour).replace(tzinfo=TZ)
-            result.append({"start": dt.isoformat(), "sum": running, "state": kwh})
+    result = []
+    for hour, kwh, running in rows:
+        dt = datetime.fromisoformat(hour).replace(tzinfo=TZ)
+        result.append({"start": dt.isoformat(), "sum": running, "state": kwh or 0.0})
     return result
 
 
@@ -144,6 +168,8 @@ async def main(full: bool = False, last_period: str | None = None):
     missing = [k for k, v in [("HA_URL", HA_URL), ("HA_TOKEN", HA_TOKEN)] if not v]
     if missing:
         raise SystemExit(f"{', '.join(missing)} not set — add to .env")
+    if not HA_URL.startswith("ws://") and not HA_URL.startswith("wss://"):
+        raise SystemExit(f"HA_URL must start with ws:// or wss://, got: {HA_URL}")
 
     until_hour = get_complete_until_hour()
     if not until_hour:

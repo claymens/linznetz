@@ -55,13 +55,14 @@ def run():
     print(f"{OK}All done.\n")
 
 
-with open(LASTRUN_LOG, "w") as _log:
-    _log.write(f"Run: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-    _log.flush()
-    sys.stdout = _Tee(sys.__stdout__, _log)
-    sys.stderr = _Tee(sys.__stderr__, _log)
-    try:
-        run()
-    finally:
-        sys.stdout = sys.__stdout__
-        sys.stderr = sys.__stderr__
+if __name__ == "__main__":
+    with open(LASTRUN_LOG, "w") as _log:
+        _log.write(f"Run: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+        _log.flush()
+        sys.stdout = _Tee(sys.__stdout__, _log)
+        sys.stderr = _Tee(sys.__stderr__, _log)
+        try:
+            run()
+        finally:
+            sys.stdout = sys.__stdout__
+            sys.stderr = sys.__stderr__
