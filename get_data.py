@@ -18,24 +18,13 @@ FAIL = "❌ "
 WARN = "⚠️  "
 
 # --- CONFIGURATION ---
-USER = os.getenv("LINZNETZ_USER")
-PWD = os.getenv("LINZNETZ_PWD")
-if not USER or not PWD or USER == "YOUR_USERNAME" or PWD == "YOUR_PASSWORD":
-    raise SystemExit(
-        "LINZNETZ_USER and LINZNETZ_PWD must be set in .env — "
-        "edit .env (see .env.example) and re-run."
-    )
-
+USER = os.getenv("LINZNETZ_USER", "YOUR_USERNAME")
+PWD = os.getenv("LINZNETZ_PWD", "YOUR_PASSWORD")
 DOWNLOAD_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "power_archive")
 URL = "https://services.linznetz.at/verbrauchsdateninformation/consumption.jsf"
-TIMEOUT      = 10_000   # general UI interactions
-TIMEOUT_AJAX = 15_000   # date-picker AJAX redraws
-TIMEOUT_CSV  = 20_000   # CSV button appearance after data load
-TIMEOUT_NAV  = 30_000   # initial page navigation
-
-# NO_DATA markers are excluded from CSV-downloaded checks so they never block retries.
-# Markers older than this many days are automatically deleted for a retry.
-NO_DATA_RETRY_DAYS = 30
+TIMEOUT      = 3_000   # general UI interactions
+TIMEOUT_AJAX = 10_000  # date-picker AJAX redraws
+TIMEOUT_CSV  = 15_000  # CSV button appearance after data load
 
 # Month range configuration (YYYY-MM format)
 START_MONTH = os.getenv("START_MONTH", "2024-01")
@@ -65,91 +54,48 @@ def debug_page(page, step_name):
     print(f"  [{step_name}] URL: {page.url}")
     print(f"  [{step_name}] Title: {page.title()}")
 
-
-def _no_data_marker_path(month):
-    return os.path.join(DOWNLOAD_PATH, f"power_data_{month}_NO_DATA")
-
-
-def _csv_files_for_month(entries, month):
-    """Return CSV entries for a given month (excludes NO_DATA markers)."""
-    prefix = f"power_data_{month}_"
-    return [f for f in entries if f.startswith(prefix) and f.endswith(".csv") and not f.endswith("_NO_DATA")]
-
-
-def _has_csv_for_month(entries, month):
-    return bool(_csv_files_for_month(entries, month))
-
-
-def _create_no_data_marker(month):
-    marker_path = _no_data_marker_path(month)
-    Path(marker_path).touch()
-    print(f"    {WARN}Marked {month} as no data — will be retried after {NO_DATA_RETRY_DAYS} days")
-
-
-def _remove_no_data_marker(month):
-    marker_path = _no_data_marker_path(month)
-    if os.path.exists(marker_path):
-        os.remove(marker_path)
-
-
-def _stale_no_data_markers(entries):
-    """Return NO_DATA marker filenames older than NO_DATA_RETRY_DAYS."""
-    now = datetime.now().timestamp()
-    threshold = now - NO_DATA_RETRY_DAYS * 86400
-    return [
-        f for f in entries
-        if f.endswith("_NO_DATA")
-        and os.path.getmtime(os.path.join(DOWNLOAD_PATH, f)) < threshold
-    ]
-
-
-def run_archiver():
+def run_archiver(force_months: list[str] | None = None, force_all: bool = False):
 
     monthly_ranges = generate_monthly_ranges(START_MONTH, END_MONTH)
-
-    # Snapshot directory once — all subsequent checks use this snapshot
-    all_entries = os.listdir(DOWNLOAD_PATH)
 
     # Re-fetch the current month only if its CSV wasn't downloaded today
     current_month = datetime.now().strftime("%Y-%m")
     today = datetime.now().date()
-    current_month_csvs = _csv_files_for_month(all_entries, current_month)
     current_month_fresh = any(
-        os.path.getsize(os.path.join(DOWNLOAD_PATH, f)) > 0
+        f.startswith(f"power_data_{current_month}_") and f.endswith(".csv")
         and datetime.fromtimestamp(os.path.getmtime(os.path.join(DOWNLOAD_PATH, f))).date() >= today
-        for f in current_month_csvs
+        for f in os.listdir(DOWNLOAD_PATH)
     )
     if not current_month_fresh:
-        for f in current_month_csvs:
-            os.remove(os.path.join(DOWNLOAD_PATH, f))
-        marker = _no_data_marker_path(current_month)
-        if os.path.exists(marker):
-            os.remove(marker)
-        all_entries = os.listdir(DOWNLOAD_PATH)  # refresh snapshot
+        for f in os.listdir(DOWNLOAD_PATH):
+            if f.startswith(f"power_data_{current_month}_"):
+                os.remove(os.path.join(DOWNLOAD_PATH, f))
 
-    # Pending months: months without CSV files (NO_DATA markers do NOT count as CSVs)
-    pending = [r for r in monthly_ranges if not _has_csv_for_month(all_entries, r['month'])]
+    # Force re-download: either all months or a specific list
+    if force_all:
+        for f in os.listdir(DOWNLOAD_PATH):
+            if f.startswith("power_data_"):
+                os.remove(os.path.join(DOWNLOAD_PATH, f))
+        print(f"  Cleared all cached CSVs (full forced re-download)")
+    elif force_months:
+        for month in force_months:
+            for f in os.listdir(DOWNLOAD_PATH):
+                if f.startswith(f"power_data_{month}_"):
+                    os.remove(os.path.join(DOWNLOAD_PATH, f))
+                    print(f"  Removed cached {f} (forced re-download)")
 
-    # Retry stale NO_DATA markers (older than NO_DATA_RETRY_DAYS)
-    stale_markers = _stale_no_data_markers(all_entries)
-    for marker in stale_markers:
-        marker_path = os.path.join(DOWNLOAD_PATH, marker)
-        os.remove(marker_path)
-        all_entries = os.listdir(DOWNLOAD_PATH)  # refresh snapshot
-        month = marker[len("power_data_"):-len("_NO_DATA")]
-        matching = [r for r in monthly_ranges if r['month'] == month]
-        if matching and matching[0] not in pending:
-            pending.append(matching[0])
-            print(f"  Retrying previously no-data month {month} (marker expired)\n")
+    pending = [r for r in monthly_ranges if not any(
+        f.startswith(f"power_data_{r['month']}_") for f in os.listdir(DOWNLOAD_PATH)
+    )]
 
     if not pending:
-        csv_files = [f for f in os.listdir(DOWNLOAD_PATH) if f.endswith(".csv")]
         archive_size = sum(
-            os.path.getsize(os.path.join(DOWNLOAD_PATH, f)) for f in csv_files
+            os.path.getsize(os.path.join(DOWNLOAD_PATH, f))
+            for f in os.listdir(DOWNLOAD_PATH) if f.endswith(".csv")
         ) / (1024 * 1024)
         print(f"{OK}All {len(monthly_ranges)} month(s) are up to date.")
-        print(f"   {len(monthly_ranges)} months · {len(csv_files)} CSV files · {archive_size:.1f} MB on disk")
-        print(f"   Last file: {sorted(csv_files)[-1][:35]}…\n")
+        print(f"   {len(monthly_ranges)} months · {len([f for f in os.listdir(DOWNLOAD_PATH) if f.endswith('.csv')])} CSV files · {archive_size:.1f} MB on disk")
+        print(f"   Last file: {sorted(f for f in os.listdir(DOWNLOAD_PATH) if f.endswith('.csv'))[-1][:35]}…\n")
         return
 
     already = len(monthly_ranges) - len(pending)
@@ -164,7 +110,7 @@ def run_archiver():
 
         try:
             print("[1/5] Navigating to portal...")
-            page.goto(URL, wait_until="networkidle", timeout=TIMEOUT_NAV)
+            page.goto(URL, wait_until="networkidle", timeout=TIMEOUT)
             if DEBUG: debug_page(page, "After Initial Load")
 
             # Login process
@@ -197,14 +143,9 @@ def run_archiver():
                 print(f"  {FAIL}Login error: {e}")
                 return
 
-            # After successful login: verify the data form is present
-            print("[3/5] Verifying post-login state...")
-            try:
-                page.locator('input[id="myForm1:calendarFromRegion"]').wait_for(state="attached", timeout=TIMEOUT)
-                print(f"  {OK}Data form loaded — login confirmed")
-            except Exception as e:
-                print(f"  {FAIL}Data form not found after login: {e}")
-                return
+            # After successful login: wait for the form to be present
+            print("[3/5] Waiting for page to load...")
+            page.locator('input[id="myForm1:calendarFromRegion"]').wait_for(state="attached", timeout=TIMEOUT)
 
             # Dismiss cookie consent dialog if present
             try:
@@ -312,11 +253,12 @@ def run_archiver():
                         """)
                         print(f"    {OK}Set {from_date} → {to_date}, triggered 'Anzeigen'")
                         page.wait_for_load_state("networkidle", timeout=TIMEOUT)
-                        page.get_by_text("CSV", exact=False).wait_for(state="visible", timeout=TIMEOUT_CSV)
-                        print(f"    {OK}CSV button appeared")
+                        try:
+                            page.get_by_text("CSV", exact=False).wait_for(state="visible", timeout=TIMEOUT_CSV)
+                        except Exception:
+                            pass
                     else:
                         print(f"    {FAIL}'Anzeigen' button not found")
-                        continue
 
                     # Export CSV — matched by text
                     export_button = page.get_by_text("CSV", exact=False).first
@@ -331,23 +273,17 @@ def run_archiver():
                         # ignored our date range — data likely not available for that period
                         if not re.search(r'\d{8}_\d{8}', original_filename):
                             print(f"    {WARN}No data for {month_str} (portal returned: {original_filename})\n")
-                            _create_no_data_marker(month_str)
                             continue
                         new_filename = f"power_data_{month_str}_{original_filename}"
                         save_path = os.path.join(DOWNLOAD_PATH, new_filename)
                         download.save_as(save_path)
-                        # Verify download is non-empty
-                        if os.path.getsize(save_path) == 0:
-                            os.remove(save_path)
-                            print(f"    {WARN}Downloaded file is empty for {month_str}, removed\n")
-                            _create_no_data_marker(month_str)
-                            continue
-                        _remove_no_data_marker(month_str)
                         print(f"    {OK}Downloaded: {new_filename}\n")
                     else:
-                        print(f"    {WARN}CSV button not visible for {month_str}\n")
-                        _create_no_data_marker(month_str)
-
+                        # Write a marker file so this month is skipped on future runs
+                        marker_path = os.path.join(DOWNLOAD_PATH, f"power_data_{month_str}_NO_DATA")
+                        Path(marker_path).touch()
+                        print(f"    {WARN}No data available for {month_str} — marked to skip future runs\n")
+                
                 except Exception as e:
                     print(f"    {FAIL}Error processing month {month_str}: {e}")
                     continue

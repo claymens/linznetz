@@ -1,6 +1,6 @@
 import sys
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 LASTRUN_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lastrun.log")
 OK = "✅ "
@@ -32,12 +32,29 @@ def run():
         if idx + 1 < len(sys.argv) and not sys.argv[idx + 1].startswith("-"):
             ha_full_period = sys.argv[idx + 1]
 
+    # Determine which months to force re-download from the portal
+    force_months = None
+    force_all = False
+    if ha_full:
+        now = datetime.now()
+        if ha_full_period == "1m":
+            # Last 30 days can span two calendar months
+            since = now - timedelta(days=30)
+            months = set()
+            d = since
+            while d <= now:
+                months.add(d.strftime("%Y-%m"))
+                d += timedelta(days=1)
+            force_months = sorted(months)
+        else:
+            force_all = True
+
     steps = 3 if ha else 2
 
     print("━" * 50)
     print(f"  Step 1/{steps} — Downloading data from portal")
     print("━" * 50)
-    run_archiver()
+    run_archiver(force_months=force_months, force_all=force_all)
 
     print("━" * 50)
     print(f"  Step 2/{steps} — Updating database")
