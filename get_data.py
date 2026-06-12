@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import re
 import sys
@@ -18,13 +20,20 @@ FAIL = "❌ "
 WARN = "⚠️  "
 
 # --- CONFIGURATION ---
-USER = os.getenv("LINZNETZ_USER", "YOUR_USERNAME")
-PWD = os.getenv("LINZNETZ_PWD", "YOUR_PASSWORD")
+USER = os.getenv("LINZNETZ_USER")
+PWD = os.getenv("LINZNETZ_PWD")
+if not USER or not PWD or USER == "YOUR_USERNAME" or PWD == "YOUR_PASSWORD":
+    raise SystemExit(
+        "LINZNETZ_USER and LINZNETZ_PWD must be set in .env — "
+        "edit .env (see .env.example) and re-run."
+    )
+
 DOWNLOAD_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "power_archive")
 URL = "https://services.linznetz.at/verbrauchsdateninformation/consumption.jsf"
-TIMEOUT      = 3_000   # general UI interactions
-TIMEOUT_AJAX = 10_000  # date-picker AJAX redraws
-TIMEOUT_CSV  = 15_000  # CSV button appearance after data load
+TIMEOUT      = 10_000  # general UI interactions
+TIMEOUT_AJAX = 15_000  # date-picker AJAX redraws
+TIMEOUT_CSV  = 20_000  # CSV button appearance after data load
+TIMEOUT_NAV  = 30_000  # initial page navigation
 
 # Month range configuration (YYYY-MM format)
 START_MONTH = os.getenv("START_MONTH", "2024-01")
@@ -110,7 +119,7 @@ def run_archiver(force_months: list[str] | None = None, force_all: bool = False)
 
         try:
             print("[1/5] Navigating to portal...")
-            page.goto(URL, wait_until="networkidle", timeout=TIMEOUT)
+            page.goto(URL, wait_until="networkidle", timeout=TIMEOUT_NAV)
             if DEBUG: debug_page(page, "After Initial Load")
 
             # Login process
@@ -259,6 +268,7 @@ def run_archiver(force_months: list[str] | None = None, force_all: bool = False)
                             pass
                     else:
                         print(f"    {FAIL}'Anzeigen' button not found")
+                        continue
 
                     # Export CSV — matched by text
                     export_button = page.get_by_text("CSV", exact=False).first
