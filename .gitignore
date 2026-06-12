@@ -2,6 +2,8 @@
 .env.local
 power_archive/
 power_data.db
+power_data.db-shm
+power_data.db-wal
 venv/
 __pycache__/
 *.pyc
