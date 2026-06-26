@@ -4,7 +4,7 @@ Run once to backfill all history; safe to re-run after new data is imported —
 only complete days are ever sent, so HA never shows a partial-day bar.
 
 Requires in .env:
-  HA_URL   = ws://10.0.0.x:8123/api/websocket
+  HA_URL   = ws://192.168.x.x:8123/api/websocket
   HA_TOKEN = <long-lived access token>
 """
 

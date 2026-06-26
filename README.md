@@ -21,6 +21,7 @@ Scrapes quarter-hourly power consumption data from the LINZ NETZ portal, stores 
 | `db_update.py` | Imports CSVs from `power_archive/` into `power_data.db` |
 | `viewer.html` | Browser-based viewer for the SQLite database |
 | `ha_import.py` | Pushes history to Home Assistant for the Energy Dashboard (optional) |
+| `clear_sensor_stats.py` | Interactive tool to clear or range-delete HA statistics for any sensor |
 
 ## Setup
 
@@ -219,6 +220,44 @@ Re-downloads all months from the portal, updates the database, and pushes the fu
 5. Save — historical data appears immediately
 
 > **Note:** HA will show a warning that `sensor.linz_netz_*` entities are unavailable. This is expected — the SQL sensors cannot read the file because `power_data.db` is not on the machine running HA. The Energy Dashboard data comes entirely from the statistics import and is unaffected by this warning.
+
+## Clearing HA Statistics (`clear_sensor_stats.py`)
+
+A utility for removing wrong or duplicate historical statistics from Home Assistant — useful after a bad import, a sensor replacement, or portal data corrections.
+
+```bash
+python clear_sensor_stats.py              # list all HA sensors, pick interactively
+python clear_sensor_stats.py <search>     # pre-filter the list by search string
+```
+
+**Examples:**
+```bash
+python clear_sensor_stats.py eve          # shows only sensors containing "eve"
+python clear_sensor_stats.py pv           # shows only sensors containing "pv"
+```
+
+**Interactive flow:**
+
+1. Connects to HA and lists all statistic IDs (filtered if a search string was given)
+2. You pick a sensor by number
+3. You enter an optional date range (`YYYY-MM-DD` or `YYYY-MM-DDTHH:MM:SS`)
+4. A summary of what will be deleted is shown
+5. Type `yes` to confirm — nothing is deleted until then
+
+**No date range → clear all:**
+Uses `recorder/clear_statistics` via the WebSocket API. Wipes the entire history for that sensor instantly. Irreversible.
+
+**With date range → SSH + SQLite:**
+The HA WebSocket API has no range-delete command, so the script SSHes into the HA host and deletes rows directly from `home-assistant_v2.db`. Requires passwordless SSH access to the HA host (key-based auth).
+
+Additional `.env` keys for the SSH path (both optional):
+
+```
+HA_SSH_USER=root          # SSH user on the HA host (default: root)
+HA_DB_PATH=/config/home-assistant_v2.db   # path to the HA SQLite DB on the host (default shown)
+```
+
+> **Note:** After a range-delete, cumulative sum sensors (energy, gas, water) will show a gap or jump at the deletion boundary. Use `ha_import.py` or HA's **Recorder → Adjust sum statistics** to correct the running total if needed.
 
 ## License
 
